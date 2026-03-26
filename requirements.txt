@@ -1,0 +1,13 @@
+finance-datareader
+pykrx
+pandas
+numpy
+requests
+lxml
+beautifulsoup4
+python-dotenv
+scipy
+statsmodels
+matplotlib
+tabulate
+python-telegram-bot>=21.0
