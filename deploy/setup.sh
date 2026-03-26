@@ -27,7 +27,7 @@ pip install -r requirements.txt
 echo "=== 6. crontab 등록 (매일 15:15 KST) ==="
 # 기존 hollykr 관련 cron 삭제 후 재등록
 crontab -l 2>/dev/null | grep -v "hollykr" > /tmp/crontab_tmp || true
-echo "15 15 * * 1-5 cd /home/\$(whoami)/hollykr && /home/\$(whoami)/hollykr/venv/bin/python -m scripts.screeners.holly_kr.run --proven --entry close --telegram >> /home/\$(whoami)/hollykr/hollykr.log 2>&1" >> /tmp/crontab_tmp
+echo "40 14 * * 1-5 cd /home/\$(whoami)/hollykr && /home/\$(whoami)/hollykr/venv/bin/python -m scripts.screeners.holly_kr.run --proven --entry close --telegram >> /home/\$(whoami)/hollykr/hollykr.log 2>&1" >> /tmp/crontab_tmp
 crontab /tmp/crontab_tmp
 rm /tmp/crontab_tmp
 
