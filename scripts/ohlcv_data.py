@@ -25,26 +25,20 @@ from config import CACHE_DIR
 # FDR에 타임아웃 옵션이 없으므로 소켓 타임아웃 설정
 socket.setdefaulttimeout(30)
 
-# 메모리 캐시 (세션 내)
+# 메모리 캐시
 _DATA_CACHE: Dict[str, pd.DataFrame] = {}
 
-# 파일 캐시 (당일 유효)
+# 영구 파일 캐시 (증분 업데이트)
 _OHLCV_CACHE_DIR = CACHE_DIR / 'ohlcv'
 _OHLCV_CACHE_DIR.mkdir(exist_ok=True)
-
-
-def _get_cache_file() -> Path:
-    """당일 OHLCV 캐시 파일 경로"""
-    today = datetime.now().strftime('%Y-%m-%d')
-    return _OHLCV_CACHE_DIR / f'ohlcv_{today}.pkl'
+_CACHE_FILE = _OHLCV_CACHE_DIR / 'ohlcv_cache.pkl'
 
 
 def _load_file_cache() -> Dict[str, pd.DataFrame]:
-    """당일 파일 캐시 로드"""
-    cache_file = _get_cache_file()
-    if cache_file.exists():
+    """영구 캐시 로드"""
+    if _CACHE_FILE.exists():
         try:
-            with open(cache_file, 'rb') as f:
+            with open(_CACHE_FILE, 'rb') as f:
                 return pickle.load(f)
         except Exception:
             pass
@@ -52,24 +46,28 @@ def _load_file_cache() -> Dict[str, pd.DataFrame]:
 
 
 def _save_file_cache(cache: Dict[str, pd.DataFrame]):
-    """파일 캐시 저장"""
-    cache_file = _get_cache_file()
+    """영구 캐시 저장"""
     try:
-        with open(cache_file, 'wb') as f:
+        with open(_CACHE_FILE, 'wb') as f:
             pickle.dump(cache, f)
     except Exception:
         pass
 
 
-def _cleanup_old_cache():
-    """어제 이전 OHLCV 캐시 삭제"""
-    today = datetime.now().strftime('%Y-%m-%d')
-    for f in _OHLCV_CACHE_DIR.glob('ohlcv_*.pkl'):
-        if today not in f.name:
-            try:
-                f.unlink()
-            except Exception:
-                pass
+def _needs_update(df: pd.DataFrame) -> bool:
+    """캐시된 데이터가 오늘 날짜를 포함하는지 확인"""
+    if df is None or len(df) == 0:
+        return True
+    last_date = df.index[-1]
+    today = datetime.now().date()
+    # 주말이면 금요일 데이터면 OK
+    if today.weekday() >= 5:  # 토/일
+        return False
+    # 장 시작 전(9시 전)이면 어제 데이터면 OK
+    if datetime.now().hour < 9:
+        return (today - last_date.date()).days > 1
+    # 장중/장후: 오늘 데이터 필요
+    return last_date.date() < today
 
 
 # 시작 시 파일 캐시를 메모리에 로드
@@ -77,7 +75,7 @@ _file_cache = _load_file_cache()
 if _file_cache:
     _DATA_CACHE.update(_file_cache)
 
-# 저장 카운터 (매 100개마다 파일에 flush)
+# 저장 카운터
 _save_counter = 0
 
 
@@ -96,37 +94,56 @@ def get_ohlcv(ticker: str, days: int = 300, use_cache: bool = True) -> Optional[
     global _save_counter
 
     cache_key = f"{ticker}_{days}"
+
+    # 1. 캐시에 있고 업데이트 불필요하면 바로 반환
     if use_cache and cache_key in _DATA_CACHE:
-        return _DATA_CACHE[cache_key]
+        cached = _DATA_CACHE[cache_key]
+        if not _needs_update(cached):
+            return cached
 
     try:
-        end = datetime.now()
-        start = end - timedelta(days=int(days * 1.5))  # 여유 있게 조회
-        df = fdr.DataReader(ticker, start.strftime('%Y-%m-%d'))
+        # 2. 캐시에 있지만 오늘 데이터 필요 → 최근 5일만 가져와서 병합 (증분)
+        if cache_key in _DATA_CACHE and _DATA_CACHE[cache_key] is not None and len(_DATA_CACHE[cache_key]) > 0:
+            old_df = _DATA_CACHE[cache_key]
+            last_date = old_df.index[-1].strftime('%Y-%m-%d')
+            new_df = fdr.DataReader(ticker, last_date)
 
-        if df is None or len(df) == 0:
-            return None
+            if new_df is not None and len(new_df) > 0:
+                col_map = {'시가': 'Open', '고가': 'High', '저가': 'Low',
+                           '종가': 'Close', '거래량': 'Volume', '등락률': 'Change'}
+                new_df = new_df.rename(columns=col_map)
+                # 기존 + 신규 병합 (중복 제거)
+                df = pd.concat([old_df, new_df])
+                df = df[~df.index.duplicated(keep='last')]
+                df = df.sort_index().tail(days)
+            else:
+                df = old_df
+        else:
+            # 3. 캐시 없음 → 전체 수집
+            end = datetime.now()
+            start = end - timedelta(days=int(days * 1.5))
+            df = fdr.DataReader(ticker, start.strftime('%Y-%m-%d'))
 
-        # 컬럼명 통일 (FDR은 영문, pykrx는 한글)
-        col_map = {
-            '시가': 'Open', '고가': 'High', '저가': 'Low',
-            '종가': 'Close', '거래량': 'Volume', '등락률': 'Change'
-        }
-        df = df.rename(columns=col_map)
+            if df is None or len(df) == 0:
+                return None
 
-        # 최근 days일만
-        df = df.tail(days)
+            col_map = {'시가': 'Open', '고가': 'High', '저가': 'Low',
+                       '종가': 'Close', '거래량': 'Volume', '등락률': 'Change'}
+            df = df.rename(columns=col_map)
+            df = df.tail(days)
 
         if use_cache:
             _DATA_CACHE[cache_key] = df
             _save_counter += 1
-            # 100개마다 파일에 flush
             if _save_counter % 100 == 0:
                 _save_file_cache(_DATA_CACHE)
 
         return df
 
     except Exception as e:
+        # 에러 시 기존 캐시라도 반환
+        if cache_key in _DATA_CACHE:
+            return _DATA_CACHE[cache_key]
         print(f"  OHLCV 수집 실패 ({ticker}): {e}")
         return None
 
@@ -198,7 +215,6 @@ def flush_cache():
     """메모리 캐시를 파일에 저장"""
     if _DATA_CACHE:
         _save_file_cache(_DATA_CACHE)
-        _cleanup_old_cache()
 
 
 def clear_cache():
