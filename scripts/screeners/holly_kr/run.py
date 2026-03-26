@@ -53,12 +53,22 @@ def main():
                         help='야간 전략 선정 (최근 60일 백테스트 기반)')
     parser.add_argument('--proven', action='store_true',
                         help='실전 모드 - 검증된 9개 전략만 (강력 3 + 관심 6)')
+    parser.add_argument('--nightly', action='store_true',
+                        help='야간 모드 - 전략 선정 + 결과 저장 (18:00 실행용)')
+    parser.add_argument('--auto', action='store_true',
+                        help='자동 모드 - 야간 선정 결과 로드 → 스캔 → 텔레그램 (14:40 실행용)')
 
     args = parser.parse_args()
 
     entry_desc = '다음날 시가' if args.entry == 'open' else '당일 종가(15:20 전)'
 
-    if args.proven:
+    # --nightly: 야간 전략 선정 + 저장 (18:00)
+    if args.nightly:
+        mode_desc = '야간 전략 선정 (결과 저장)'
+    # --auto: 야간 결과 로드 + 스캔 + 텔레그램 (14:40)
+    elif args.auto:
+        mode_desc = '자동 모드 (야간 선정 결과 사용)'
+    elif args.proven:
         mode_desc = f'실전 모드: 강력 {len(STRONG_STRATEGIES)}개 + 관심 {len(WATCH_STRATEGIES)}개'
     elif args.select:
         mode_desc = '야간 전략 선정'
@@ -74,18 +84,48 @@ def main():
 
     start_time = time.time()
 
-    signals = run_scanner(
-        phase=args.phase,
-        entry_mode=args.entry,
-        use_nightly_selection=args.select and not args.proven,
-    )
-    elapsed = time.time() - start_time
+    if args.nightly:
+        # 야간 모드: 전략 선정 + 결과 저장 + 전체 스캔 (CSV 기록용)
+        signals = run_scanner(
+            phase=args.phase,
+            entry_mode=args.entry,
+            use_nightly_selection=True,
+        )
+        # 활성 전략 저장
+        from scripts.screeners.holly_kr.active_strategies import save_active
+        active_names = list(set(s.strategy_name for s in signals))
+        # PROVEN 전략은 항상 포함
+        for name in PROVEN_STRATEGIES:
+            if name not in active_names:
+                active_names.append(name)
+        save_active(active_names)
 
-    # 전략 필터
-    if args.proven:
-        signals = [s for s in signals if s.strategy_name in PROVEN_STRATEGIES]
-    elif args.strategy:
-        signals = [s for s in signals if s.strategy_name == args.strategy]
+    elif args.auto:
+        # 자동 모드: 야간 결과 로드 → 해당 전략만 스캔
+        from scripts.screeners.holly_kr.active_strategies import load_active
+        active_names = load_active()
+        if not active_names:
+            print("  야간 선정 결과 없음 → 기본 PROVEN 전략 사용")
+            active_names = PROVEN_STRATEGIES
+
+        signals = run_scanner(
+            phase=args.phase,
+            entry_mode=args.entry,
+        )
+        signals = [s for s in signals if s.strategy_name in active_names]
+
+    else:
+        signals = run_scanner(
+            phase=args.phase,
+            entry_mode=args.entry,
+            use_nightly_selection=args.select and not args.proven,
+        )
+        if args.proven:
+            signals = [s for s in signals if s.strategy_name in PROVEN_STRATEGIES]
+        elif args.strategy:
+            signals = [s for s in signals if s.strategy_name == args.strategy]
+
+    elapsed = time.time() - start_time
 
     # 강력/관심 태그 부여
     for sig in signals:

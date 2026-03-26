@@ -24,10 +24,13 @@ echo "=== 5. 패키지 설치 ==="
 pip install --upgrade pip
 pip install -r requirements.txt
 
-echo "=== 6. crontab 등록 (매일 15:15 KST) ==="
+echo "=== 6. crontab 등록 ==="
 # 기존 hollykr 관련 cron 삭제 후 재등록
 crontab -l 2>/dev/null | grep -v "hollykr" > /tmp/crontab_tmp || true
-echo "40 14 * * 1-5 cd /home/\$(whoami)/hollykr && /home/\$(whoami)/hollykr/venv/bin/python -m scripts.screeners.holly_kr.run --proven --entry close --telegram >> /home/\$(whoami)/hollykr/hollykr.log 2>&1" >> /tmp/crontab_tmp
+# 18:00 야간 전략 선정 (오늘 데이터 확정 후 내일 쓸 전략 평가 + 저장)
+echo "0 18 * * 1-5 cd /home/\$(whoami)/hollykr && /home/\$(whoami)/hollykr/venv/bin/python -m scripts.screeners.holly_kr.run --nightly --entry close --csv >> /home/\$(whoami)/hollykr/hollykr_nightly.log 2>&1" >> /tmp/crontab_tmp
+# 14:40 자동 시그널 전송 (야간 선정 결과 사용 + 종가매매 + 텔레그램)
+echo "40 14 * * 1-5 cd /home/\$(whoami)/hollykr && /home/\$(whoami)/hollykr/venv/bin/python -m scripts.screeners.holly_kr.run --auto --entry close --telegram >> /home/\$(whoami)/hollykr/hollykr.log 2>&1" >> /tmp/crontab_tmp
 crontab /tmp/crontab_tmp
 rm /tmp/crontab_tmp
 
