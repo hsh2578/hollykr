@@ -158,6 +158,67 @@ GitHub Actions 사용 시 GitHub repo Settings → Secrets에 동일 키 등록.
 - `deploy/hollykr_scan.bat` / `hollykr_nightly.bat`
 - 필요 시 사용, 현재는 GitHub Actions로 대체 운영 가능
 
+## GitHub Actions 관리 (gh CLI)
+
+```bash
+# 수동 트리거
+gh workflow run holly-daily.yml --repo hsh2578/hollykr
+gh workflow run holly-backtest.yml --repo hsh2578/hollykr
+
+# 실행 목록/상태
+gh run list --repo hsh2578/hollykr --limit 5
+
+# 특정 job 로그 (전체)
+gh run view --job=<job-id> --repo hsh2578/hollykr --log
+
+# 실패한 스텝만
+gh run view --job=<job-id> --repo hsh2578/hollykr --log-failed
+
+# 시크릿 관리
+gh secret list --repo hsh2578/hollykr
+printf '%s' "value" | gh secret set NAME --repo hsh2578/hollykr
+```
+
+## 디버깅 커맨드
+
+```bash
+# OHLCV 캐시에서 특정 종목 최근값 확인 (캐시 정체 여부 점검)
+python -c "import pickle; d=pickle.load(open('.cache/ohlcv/ohlcv_cache.pkl','rb')); print(d['005930_500'].tail())"
+
+# KIS 토큰 만료일 확인
+cat .cache/.kis_token.json
+
+# 수급 캐시 상태 (종목별 pkl)
+ls -la .cache/investor/ | head
+
+# KIS 섹터 캐시 크기/행 수
+wc -l .cache/kis_sectors.csv
+
+# 유니버스 캐시 (당일) 검증
+python -c "import pickle; d=pickle.load(open('.cache/holly_universe_YYYY-MM-DD.pkl','rb')); print(len(d), d.head())"
+
+# 백테스트 CSV 판정 재계산 (판정 컬럼이 CSV에 없으므로 Train/Test 2행씩 그룹화 필요)
+python -c "
+import pandas as pd
+df = pd.read_csv('data/holly_kr/backtest_summary_YYYY-MM-DD.csv')
+for name, g in df.groupby('strategy', sort=False):
+    g = g.reset_index(drop=True)
+    if len(g) < 2: continue
+    tr, te = g.iloc[0], g.iloc[1]
+    print(f'{name}: Train PF={tr.profit_factor} / Test PF={te.profit_factor}')
+"
+```
+
+## 단일 전략 실행
+
+```bash
+# 스캐너: 특정 전략만 (CLI 지원됨)
+python -m scripts.screeners.holly_kr.run --strategy tailwind --entry close
+
+# 백테스트: 현재 전체 32개만 지원. 특정 전략만 돌리려면
+# backtest.py의 strategies 리스트를 임시 제한하거나 --strategy 플래그 추가 필요.
+```
+
 ## 주의사항 / 과거 버그
 
 - **OHLCV `_needs_update()` 버그 (수정됨)**: 이전엔 주말이면 무조건 `return False`라 캐시가 무기한 정체. 이제 "예상 최신 거래일" 기준으로 판단. 이 로직 건드릴 때는 주말 전환 테스트 필수.
