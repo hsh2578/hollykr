@@ -1,9 +1,9 @@
-name: HollyKR Weekly Backtest
+name: HollyKR Daily Backtest
 
 on:
   schedule:
-    # 매주 일요일 18:00 KST (UTC 09:00)
-    - cron: '0 9 * * 0'
+    # 평일 20:00 KST (UTC 11:00)
+    - cron: '0 11 * * 1-5'
   workflow_dispatch:
     inputs:
       days:
