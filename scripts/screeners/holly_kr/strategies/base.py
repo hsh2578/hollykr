@@ -84,7 +84,7 @@ class BaseStrategy(ABC):
     def _make_signal(self, ticker: str, ticker_name: str, sector: str,
                      entry_price: float, target_pct: float, stop_loss_pct: float,
                      hold_min: int, hold_max: int, confidence: float,
-                     signal_date: str) -> Signal:
+                     signal_date: str, reason: str = "") -> Signal:
         """시그널 생성 헬퍼"""
         sig = Signal(
             strategy_name=self.name,
@@ -103,6 +103,7 @@ class BaseStrategy(ABC):
             grade=self.grade,
             signal_date=signal_date,
             sector=sector,
+            reason=reason,
         )
         sig.calc_rr_ratio()
         return sig

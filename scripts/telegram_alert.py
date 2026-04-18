@@ -158,12 +158,28 @@ def _format_one_signal(s) -> list:
         else:
             warnings_filtered.append(w)
 
+    # 현재가 표시 (있으면 진입가 대비 변동률 함께)
+    current_price = getattr(s, 'current_price', 0) or 0
+    if current_price > 0 and s.entry_price > 0:
+        change_pct = (current_price - s.entry_price) / s.entry_price * 100
+        sign = '+' if change_pct >= 0 else ''
+        price_line = (f"  진입: {s.entry_price:,.0f}원({entry_label}) | "
+                      f"현재: {current_price:,.0f}원 ({sign}{change_pct:.1f}%)")
+    else:
+        price_line = f"  진입: {s.entry_price:,.0f}원({entry_label})"
+
     lines = [
         f"[{s.strategy_name}] {s.ticker_name}({s.ticker}){sector_str}",
-        f"  진입: {s.entry_price:,.0f}원({entry_label})",
+        price_line,
         f"  목표: {target_price:,.0f}원(+{s.target_pct*100:.1f}%) | 손절: {stop_price:,.0f}원(-{abs(s.stop_loss_pct)*100:.1f}%)",
         f"  신뢰도 {s.confidence:.0%} | 수급 {supply or '-'}{overlap}",
     ]
+
+    # 매수 이유 (있으면 표시)
+    reason = getattr(s, 'reason', '')
+    if reason:
+        lines.append(f"  사유: {reason}")
+
     if warnings_filtered:
         lines.append(f"  [!] {', '.join(warnings_filtered)}")
     lines.append("")

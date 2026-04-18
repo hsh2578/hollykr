@@ -44,11 +44,15 @@ class VolumeDoesntLie(BaseStrategy):
         # 손절: 당일 시가(갭업 시가) 하회 시 또는 entry x 0.95
         stop = max(row['Open'], ep * 0.95)
 
+        vol_ratio = row['Volume'] / vol_avg if vol_avg > 0 else 0
+        reason = f"갭업 +{gap*100:.1f}% · 거래량 {vol_ratio:.1f}배 · 갭 유지(종가≥시가)"
+
         return self._make_signal(
             ticker, ticker_name, sector, ep,
             target_pct=0.06, stop_loss_pct=(stop / ep - 1),
             hold_min=1, hold_max=5, confidence=0.65,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
+            reason=reason,
         )
 
     def check_exit(self, position: Dict, current_row: pd.Series) -> Optional[str]:

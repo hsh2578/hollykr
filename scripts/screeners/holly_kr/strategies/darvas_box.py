@@ -106,11 +106,16 @@ class DarvasBox(BaseStrategy):
         # 손절: ATR 기반
         _, stop_loss_pct = self._atr_target_stop(df, ep, stop_multiple=2.0)
 
+        vol_avg = df['Volume'].rolling(20).mean().iloc[-1]
+        vol_ratio = row['Volume'] / vol_avg if vol_avg > 0 else 0
+        reason = f"Darvas 박스 상단 {box_top:,.0f}원 돌파 · 거래량 {vol_ratio:.1f}배"
+
         return self._make_signal(
             ticker, ticker_name, sector, ep,
             target_pct=target_pct, stop_loss_pct=stop_loss_pct,
             hold_min=1, hold_max=10, confidence=0.70,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
+            reason=reason,
         )
 
     def check_exit(self, position: Dict, current_row: pd.Series) -> Optional[str]:

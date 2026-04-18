@@ -59,11 +59,14 @@ class Tailwind(BaseStrategy):
         ep = entry_price or row['Close']
         target_pct, stop_loss_pct = self._atr_target_stop(df, ep, target_multiple=3.0, stop_multiple=2.0)
 
+        reason = f"MA5>MA20>MA60 정배열 · MA20 터치 반등 (이격 {ma20_dist*100:.1f}%) · 양봉"
+
         return self._make_signal(
             ticker, ticker_name, sector, ep,
             target_pct=target_pct, stop_loss_pct=stop_loss_pct,
             hold_min=2, hold_max=5, confidence=0.65,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
+            reason=reason,
         )
 
     def check_exit(self, position: Dict, current_row: pd.Series) -> Optional[str]:

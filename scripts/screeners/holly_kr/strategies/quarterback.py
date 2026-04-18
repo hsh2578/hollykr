@@ -46,11 +46,15 @@ class Quarterback(BaseStrategy):
         ep = entry_price or row['Close']
         target_pct, stop_loss_pct = self._atr_target_stop(df, ep, target_multiple=3.0, stop_multiple=2.0)
 
+        reason = (f"20일 고점 대비 -{pullback*100:.1f}% 풀백 · "
+                  f"RSI14 {rsi14_val:.0f} · RSI5({rsi5_val:.0f})>RSI14 모멘텀 전환 · 양봉")
+
         return self._make_signal(
             ticker, ticker_name, sector, ep,
             target_pct=target_pct, stop_loss_pct=stop_loss_pct,
             hold_min=3, hold_max=7, confidence=0.65,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
+            reason=reason,
         )
 
     def check_exit(self, position: Dict, current_row: pd.Series) -> Optional[str]:

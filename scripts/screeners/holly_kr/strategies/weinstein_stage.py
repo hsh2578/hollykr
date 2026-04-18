@@ -50,11 +50,16 @@ class WeinsteinStage(BaseStrategy):
         # 손절: ATR 기반 (추세추종이므로 3x ATR 넓은 손절)
         _, stop_loss_pct = self._atr_target_stop(df, ep, stop_multiple=3.0)
 
+        vol_avg = df['Volume'].rolling(20).mean().iloc[-1]
+        vol_ratio = row['Volume'] / vol_avg if vol_avg > 0 else 0
+        reason = f"Stage 1→2 전환 · MA150 상승 전환 · 거래량 {vol_ratio:.1f}배"
+
         return self._make_signal(
             ticker, ticker_name, sector, ep,
             target_pct=0.0, stop_loss_pct=stop_loss_pct,
             hold_min=20, hold_max=120, confidence=0.75,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
+            reason=reason,
         )
 
     def check_exit(self, position: Dict, current_row: pd.Series) -> Optional[str]:

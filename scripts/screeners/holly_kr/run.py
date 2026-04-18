@@ -142,6 +142,16 @@ def main():
         else:
             sig.signal_tier = 'WATCH'
 
+    # 최종 10개 시그널에 KIS 실시간 현재가 붙이기
+    try:
+        from scripts.kis_price import get_current_price
+        for sig in signals:
+            cp = get_current_price(sig.ticker)
+            if cp:
+                sig.current_price = cp
+    except Exception as e:
+        print(f"  [현재가 조회 실패] {e}")
+
     print_signals(signals)
 
     if args.csv:

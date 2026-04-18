@@ -47,11 +47,16 @@ class NiceChart(BaseStrategy):
         ep = entry_price or row['Close']
         stop = ep * 0.96
 
+        vol_ratio = row['Volume'] / avg_vol if avg_vol > 0 else 0
+        reason = (f"전일 고가 {prev['High']:,.0f}원 돌파 · MA5>MA20 · "
+                  f"RSI14 {rsi_now:.0f}(적정) · 거래량 {vol_ratio:.1f}배")
+
         return self._make_signal(
             ticker, ticker_name, sector, ep,
             target_pct=0.06, stop_loss_pct=(stop / ep - 1),
             hold_min=2, hold_max=5, confidence=0.68,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
+            reason=reason,
         )
 
     def check_exit(self, position: Dict, current_row: pd.Series) -> Optional[str]:

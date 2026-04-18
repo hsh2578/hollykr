@@ -66,11 +66,14 @@ class TrendPlay(BaseStrategy):
         ep = entry_price or row['Close']
         stop = max(ma20_now, ep * 0.95)
 
+        reason = "6개 이평(5/10/20/50/100/200일) 완전 정배열 · 전 시간축 상승 동의"
+
         return self._make_signal(
             ticker, ticker_name, sector, ep,
             target_pct=0.07, stop_loss_pct=(stop / ep - 1),
             hold_min=5, hold_max=20, confidence=0.70,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
+            reason=reason,
         )
 
     def check_exit(self, position: Dict, current_row: pd.Series) -> Optional[str]:

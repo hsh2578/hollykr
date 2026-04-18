@@ -41,11 +41,15 @@ class StaggeringVolume(BaseStrategy):
         # 테마주 경고 추가
         warnings = ['테마주/작전주 필터 확인 필요 — 극단적 거래량 전략']
 
+        vol_ratio = row['Volume'] / vol_avg if vol_avg > 0 else 0
+        reason = f"거래량 {vol_ratio:.1f}배 폭발 · 20일 신고가 돌파"
+
         sig = self._make_signal(
             ticker, ticker_name, sector, ep,
             target_pct=0.07, stop_loss_pct=(stop / ep - 1),
             hold_min=1, hold_max=2, confidence=0.55,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
+            reason=reason,
         )
         sig.risk_warnings = warnings
         return sig
