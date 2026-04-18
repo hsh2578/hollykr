@@ -80,6 +80,8 @@ PHASE2_STRATEGIES = [
 ALL_STRATEGIES = PHASE1_STRATEGIES + PHASE2_STRATEGIES
 
 
+_regime_info = None  # run_scanner에서 설정
+
 def _scan_single_stock(ticker: str, name: str, sector: str,
                         market_cap: float,
                         strategies: list,
@@ -114,23 +116,22 @@ def _scan_single_stock(ticker: str, name: str, sector: str,
             logging.warning(f"[{strategy.name}] {ticker} scan error: {e}")
             continue
 
-    # 수급 등급 부여
+    # 수급 등급 + 종합 신뢰도 계산 (confidence.py 연동)
     if signals:
         try:
             sd_grade, _ = calc_supply_demand_grade(ticker)
             for sig in signals:
                 sig.supply_demand_grade = sd_grade
-                if sd_grade == 'S':
-                    sig.confidence = min(1.0, sig.confidence * 1.30)
-                elif sd_grade == 'A':
-                    sig.confidence = min(1.0, sig.confidence * 1.20)
-                elif sd_grade == 'A-':
-                    sig.confidence = min(1.0, sig.confidence * 1.10)
-                elif sd_grade == 'C':
-                    sig.confidence *= 0.90
-                elif sd_grade == 'D':
+                if sd_grade == 'D':
                     sig.risk_warnings.append('외국인+기관 동반매도')
-                    sig.confidence *= 0.70
+        except Exception:
+            pass
+
+        # confidence.py로 종합 신뢰도 계산 (수급 + 레짐 + 시장필터)
+        try:
+            from scripts.screeners.holly_kr.confidence import adjust_signal_confidence
+            for sig in signals:
+                sig.confidence = min(0.95, adjust_signal_confidence(sig, regime_info=_regime_info))
         except Exception:
             pass
 
@@ -175,12 +176,13 @@ def run_scanner(phase: str = 'all',
     Returns:
         중복 제거된 최종 시그널 리스트
     """
+    global _regime_info
     # 0. 시장 레짐 판별
     try:
-        regime_info = get_market_regime()
-        regime = regime_info.get('regime', '횡보장')
+        _regime_info = get_market_regime()
+        regime = _regime_info.get('regime', '횡보장')
     except Exception:
-        regime_info = {}
+        _regime_info = {}
         regime = '횡보장'
 
     print(f"\n[시장 레짐: {regime}]")
@@ -238,13 +240,12 @@ def run_scanner(phase: str = 'all',
     if before != len(all_signals):
         print(f"  기대수익 필터: {before} → {len(all_signals)}개")
 
-    # 5.5. 하락장 자동 차단 — 신뢰도 50% 할인
+    # 5.5. 하락장 경고 태그 (신뢰도 할인은 confidence.py에서 처리)
     if regime == '하락장':
         for sig in all_signals:
-            sig.confidence *= 0.5
             if '하락장' not in sig.risk_warnings:
                 sig.risk_warnings.append('하락장')
-        print(f"  하락장 할인 적용: {len(all_signals)}개 시그널 신뢰도 50% 감소")
+        print(f"  하락장 감지: {len(all_signals)}개 시그널에 경고 태그")
 
     # 6. 중복 제거
     final = dedup_signals(all_signals)

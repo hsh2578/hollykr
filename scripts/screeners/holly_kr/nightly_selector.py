@@ -26,8 +26,9 @@ from scripts.screeners.holly_kr.filters.market_filter import (
 # 설정
 # ============================================================================
 LOOKBACK_DAYS = 60          # 룩백 기간 (거래일, 약 3개월)
-MIN_WIN_RATE = 0.40         # 승률 최소 40%
-MIN_PROFIT_FACTOR = 1.2     # 수익팩터 최소 1.2
+MIN_WIN_RATE = 0.0          # 승률 제한 없음
+MIN_PROFIT_FACTOR = 1.05    # 수익팩터 최소 1.05
+MIN_TOTAL_RETURN = 0.10     # 총수익 최소 10%
 MAX_ACTIVE = 10             # 하루 최대 활성 전략
 MIN_ACTIVE = 3              # 하루 최소 활성 전략
 HYSTERESIS_MIN_PERIODS = 2  # 활성화: 3개 서브기간 중 최소 2개 통과 필요
@@ -179,10 +180,10 @@ def _calc_metrics(
     metrics.avg_rr_ratio = np.mean([t['rr_ratio'] for t in trades]) if trades else 0.0
     metrics.total_return = sum(t['pnl'] for t in trades)
 
-    # 최소 기준 통과 여부 (기본 기준)
+    # 최소 기준 통과 여부: PF 1.1+ AND 총수익 10%+
     base_passed = (
-        metrics.win_rate >= MIN_WIN_RATE
-        and metrics.profit_factor >= MIN_PROFIT_FACTOR
+        metrics.profit_factor >= MIN_PROFIT_FACTOR
+        and metrics.total_return >= MIN_TOTAL_RETURN
         and metrics.signal_count >= 1
     )
 
@@ -240,9 +241,10 @@ def _evaluate_sub_period(
     total_loss = abs(sum(t['pnl'] for t in losses)) if losses else 0.0001
     profit_factor = total_profit / total_loss if total_loss > 0 else 0.0
 
+    total_return = sum(t['pnl'] for t in sub_trades)
     return (
-        win_rate >= MIN_WIN_RATE
-        and profit_factor >= MIN_PROFIT_FACTOR
+        profit_factor >= MIN_PROFIT_FACTOR
+        and total_return >= MIN_TOTAL_RETURN * 0.3  # 서브기간은 전체의 1/3이므로 기준도 1/3
         and len(sub_trades) >= 1
     )
 

@@ -5,7 +5,6 @@
 from typing import List
 
 from scripts.screeners.holly_kr.signal_model import Signal
-from scripts.screeners.holly_kr.config import MULTI_SIGNAL_BOOST
 
 
 def dedup_signals(signals: List[Signal]) -> List[Signal]:
@@ -20,17 +19,20 @@ def dedup_signals(signals: List[Signal]) -> List[Signal]:
     for sig in signals:
         by_ticker.setdefault(sig.ticker, []).append(sig)
 
+    # 전략 수별 부스트 배율 (보수적)
+    BOOST_MAP = {3: 1.1, 4: 1.15, 5: 1.2}
+    BOOST_MAX = 1.25  # 6개+
+
     result = []
     for ticker, sigs in by_ticker.items():
-        # 3개+ 전략 동시 → 부스팅
-        if len(sigs) >= 3:
+        n = len(sigs)
+        if n >= 3:
+            boost = BOOST_MAP.get(n, BOOST_MAX)
             for s in sigs:
-                s.confidence = min(s.confidence * MULTI_SIGNAL_BOOST, 1.0)
+                s.confidence = min(s.confidence * boost, 0.95)
 
-        # 최고 confidence 채택
         best = max(sigs, key=lambda s: s.confidence)
-        if len(sigs) >= 3:
-            best.risk_warnings.append(f'{len(sigs)}개전략동시')
+        best.risk_warnings.append(f'{n}개전략' if n < 3 else f'{n}개전략동시')
         result.append(best)
 
     return result

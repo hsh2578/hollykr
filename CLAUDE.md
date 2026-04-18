@@ -2,38 +2,34 @@
 
 ## Project Overview
 
-한국 주식 데이터 수집·분석 프로젝트. 공통 데이터 수집 인프라 위에 다양한 스크리너를 구축하는 구조.
-HollyKR: Trade Ideas Holly AI의 한국 버전 — 45개 전략, 매일 백테스트, 텔레그램 알림.
+HollyKR - Trade Ideas Holly AI의 한국 시장 적응 버전.
+32개 전략, ATR 기반 백테스트, 매일 자동 텔레그램 시그널 전송.
+사용자가 시그널 보고 직접 매수/매도 판단 (자동매매 아님).
 
 ## How to Run
 
 ```bash
 pip install -r requirements.txt
 
-# 공통: 전 종목 재무데이터 수집
-python collect_data.py             # 증분 수집 (이전 캐시 7일내 재사용, ~1분)
-python collect_data.py --full      # 전체 재수집 (약 5~10분)
+# 실전 모드 (검증된 10개 전략, 종가매매, 텔레그램)
+python -m scripts.screeners.holly_kr.run --proven --entry close --telegram
 
-# 공통: 개별 모듈 테스트
-python -m scripts.krx_data        # KRX 종목 마스터
-python -m scripts.fnguide_data    # FnGuide 재무제표 (삼성전자)
-python -m scripts.ohlcv_data      # OHLCV 차트 데이터
-python -m scripts.investor_data   # 외국인/기관 수급 데이터
+# 야간 전략 선정 (18:00 실행, 내일 쓸 전략 자동 선별)
+python -m scripts.screeners.holly_kr.run --nightly --entry close --csv
 
-# 스크리너: HollyKR (Phase 1 EOD 12개 전략)
-python -m scripts.screeners.holly_kr.run                    # 기본 실행
-python -m scripts.screeners.holly_kr.run --csv --json       # 파일 저장
-python -m scripts.screeners.holly_kr.run --telegram         # 텔레그램 알림
-python -m scripts.screeners.holly_kr.run --strategy engulfing  # 특정 전략만
+# 자동 모드 (야간 선정 결과 사용, 14:40 실행)
+python -m scripts.screeners.holly_kr.run --auto --entry close --telegram
 
-# 스크리너: 페어 트레이딩
-python -m scripts.screeners.pairs_trading.run                    # 기본 실행
-python -m scripts.screeners.pairs_trading.run --csv --json       # 파일 저장
-python -m scripts.screeners.pairs_trading.run --signal ENTRY_STRONG
-python -m scripts.screeners.pairs_trading.visualize              # 차트 생성
+# 전체 32개 전략 스캔
+python -m scripts.screeners.holly_kr.run --entry close --telegram
 
-# 텔레그램 알림 테스트
-python -m scripts.telegram_alert
+# 백테스트
+python -m scripts.screeners.holly_kr.backtest --days 200 --sample 200 --entry close --csv
+
+# 데이터 수집
+python collect_data.py             # 증분 수집
+python -m scripts.investor_data    # 수급 데이터 테스트
+python -m scripts.telegram_alert   # 텔레그램 테스트
 ```
 
 ## Architecture
@@ -42,108 +38,89 @@ python -m scripts.telegram_alert
 config.py                     # 공통 설정 (경로, 네트워크, FnGuide, 수급)
 collect_data.py               # 전종목 재무데이터 배치 수집기 (증분 수집)
 scripts/
-├── krx_data.py               # [공통] KRX 종목 마스터
-├── fnguide_data.py           # [공통] FnGuide 재무제표
-├── ohlcv_data.py             # [공통] FinanceDataReader OHLCV
-├── investor_data.py          # [공통] 외국인/기관 수급 (네이버 금융)
-├── telegram_alert.py         # [공통] 텔레그램 알림 전송
-├── utils/
-│   └── indicators.py         # [공통] 기술적 지표
-└── screeners/
-    ├── holly_kr/             # HollyKR 스크리너 (Holly AI 한국 버전)
-    │   ├── config.py             # 유니버스/비용/포지션/RS Rating 설정
-    │   ├── run.py                # CLI 진입점
-    │   ├── scanner.py            # 오케스트레이터 (전략 순회 + 수급 등급)
-    │   ├── signal_model.py       # Signal 데이터 클래스
-    │   ├── indicators.py         # RS Rating, 캔들 패턴, RSI
-    │   ├── universe.py           # 유니버스 필터 (WICS 기반)
-    │   ├── output.py             # 터미널 테이블 + CSV/JSON
-    │   ├── strategies/           # 12개 EOD 전략
-    │   │   ├── base.py               # BaseStrategy 부모 클래스
-    │   │   ├── pushing_the_spring.py  # 스프링 돌파
-    │   │   ├── engulfing.py           # 장악형
-    │   │   ├── yesterday_hammer.py    # 해머 반전
-    │   │   ├── snap_back_long.py      # 과매도 반등
-    │   │   ├── horseshoe_up.py        # 갭업 U자 반등
-    │   │   ├── volume_doesnt_lie.py   # 거래량 폭발 갭
-    │   │   ├── minervini_trend.py     # Minervini 8조건
-    │   │   ├── darvas_box.py          # Darvas 박스 돌파
-    │   │   ├── weinstein_stage.py     # Weinstein Stage 2
-    │   │   ├── magic_formula.py       # Greenblatt ROIC+EY
-    │   │   ├── piotroski_fscore.py    # Piotroski 9점
-    │   │   └── livermore_pivot.py     # Livermore 신고가
-    │   └── filters/
-    │       ├── theme_filter.py       # 테마주/작전주 제외
-    │       ├── market_filter.py      # 시장 레짐 판별
-    │       └── dedup.py              # 중복 시그널 처리
-    └── pairs_trading/        # 페어 트레이딩 스크리너
-        ├── config.py             # 페어 전용 설정
-        ├── run.py                # CLI 진입점
-        ├── visualize.py          # 차트 생성
-        ├── universe.py           # 유니버스 필터 + WICS 섹터
-        ├── data_prep.py          # 가격 매트릭스 + 로그수익률
-        ├── cointegration.py      # Engle-Granger 공적분 검정
-        ├── stability.py          # 롤링 ADF + 반감기
-        ├── zscore.py             # 멀티 윈도우 Z-Score
-        ├── signals.py            # 시그널 생성 (오케스트레이터)
-        └── output.py             # 터미널 테이블 + CSV/JSON
-.cache/                       # 캐시 (fnguide pkl, wics_sectors.csv, investor/)
-data/                         # 결과 출력
-├── holly_kr/                 # HollyKR 결과
-└── pairs/                    # 페어 트레이딩 결과
+  krx_data.py                 # [공통] KRX 종목 마스터 (캐시)
+  fnguide_data.py             # [공통] FnGuide 재무제표
+  ohlcv_data.py               # [공통] OHLCV (증분 캐시, 영구 파일)
+  investor_data.py            # [공통] 외국인/기관 수급 (네이버 금융)
+  telegram_alert.py           # [공통] 텔레그램 알림 (강력/관심 2단계)
+  utils/indicators.py         # [공통] 기술적 지표
+  screeners/
+    holly_kr/                 # HollyKR 스크리너
+      config.py               # 유니버스/비용/포지션 설정
+      run.py                  # CLI (--proven/--auto/--nightly)
+      scanner.py              # 오케스트레이터 (전략 순회 + 수급 + 레짐)
+      backtest.py             # 백테스트 엔진 (OOS, 슬리피지, 거래비용)
+      signal_model.py         # Signal 데이터 클래스
+      indicators.py           # RS Rating, 캔들 패턴, RSI
+      universe.py             # 유니버스 필터 (시총 1000억+)
+      output.py               # 터미널 + CSV/JSON
+      confidence.py           # 종합 신뢰도 (수급+레짐+시장필터)
+      exit_manager.py         # 통일 청산 규칙
+      nightly_selector.py     # 야간 전략 선정 (PF 1.05+ AND 총수익 10%+)
+      active_strategies.py    # 야간 선정 결과 저장/로드
+      strategies/             # 32개 전략
+        base.py               # BaseStrategy (ATR 목표/손절 헬퍼)
+        # Phase 1 EOD 12개
+        pushing_the_spring.py, engulfing.py, yesterday_hammer.py,
+        snap_back_long.py, horseshoe_up.py, volume_doesnt_lie.py,
+        minervini_trend.py, darvas_box.py, weinstein_stage.py,
+        livermore_pivot.py, magic_formula.py, piotroski_fscore.py
+        # Phase 2 HYBRID 20개
+        bullish_trend_change.py, float_on.py, wake_up_call.py,
+        staggering_volume.py, close_to_a_cross.py, alpha_predators.py,
+        bullish_pullback.py, strong_stock_pulling_back.py,
+        quarterback.py, tailwind.py, trend_play.py, the_continuation.py,
+        got_dough.py, guiding_hand.py, nice_chart.py, the_vault.py,
+        pulling_the_arrow.py, balloon_under_water.py,
+        neo_breakout.py, neo_pullback.py
+      filters/
+        theme_filter.py       # 테마주/작전주 제외
+        market_filter.py      # 시장 레짐 판별 (상승/횡보/하락)
+        dedup.py              # 중복 시그널 (단계별 부스트)
+    pairs_trading/            # 페어 트레이딩 스크리너 (별도)
+deploy/
+  hollykr_scan.bat            # 14:40 스캔 (Windows 스케줄러)
+  hollykr_nightly.bat         # 18:00 야간 선정
+  setup.sh                    # 서버 세팅 스크립트
 ```
 
-## 공통 데이터 수집
+## 실전 전략 (백테스트 검증, ATR 기반, 종가매매)
 
-### 종목 마스터 (krx_data.py)
-폴백 체인: KRX OTP CSV → finder_stkisu + MDCSTAT01501 → 네이버 모바일 API → FDR
+강력 (PF 1.2+):
+- close_to_a_cross: 골든크로스 + 거래량 2배 + 당일 2%+ 상승
+- weinstein_stage: Stage 1->2 전환 + 거래량 폭발 (추세추종, 목표 없음)
+- tailwind: 이평 정배열 + MA20 터치 반등
+- wake_up_call: 20일 신고가 + 이평 정배열
 
-### 재무제표 (fnguide_data.py)
-SVD_Finance.asp + SVD_Main.asp, TTM 자동 계산, pickle 캐시
+관심 (PF 1.05~1.2):
+- darvas_box, volume_doesnt_lie, staggering_volume,
+  quarterback, trend_play, nice_chart
 
-### OHLCV (ohlcv_data.py)
-FinanceDataReader.DataReader(), 메모리 캐시
+## 핵심 설정
 
-### 수급 데이터 (investor_data.py)
-네이버 금융 외국인/기관 순매수 (finance.naver.com/item/frgn.naver)
-수급 등급: A(동반매수) / B(일부매수) / C(중립) / D(동반매도)
-pickle 캐시 (.cache/investor/), 12시간 유효
+- 유니버스: 시총 1,000억+, 보통주, 스팩/리츠 제외
+- 거래비용: 0.21% (매수 0.015% + 매도 0.015% + 세금 0.18%)
+- 슬리피지: 대형주 0.1%, 중형주 0.2%, 소형주 0.5%
+- ATR 목표/손절: 목표 ATR x 3, 손절 ATR x 2 (종목별 동적)
+- 신뢰도: base x 수급(1.1) x 레짐 x 다중부스트(1.1~1.25), 상한 0.95
+- 야간 선정: PF 1.05+ AND 총수익 10%+ (60일 룩백)
+- 시그널 캡: 강력 10개 + 관심 15개
 
-### 재무데이터 증분 수집 (collect_data.py)
-이전 캐시 로드 → 7일 이내면 재사용 → 신규/갱신 종목만 FnGuide 수집
---full 옵션으로 전체 재수집 가능
+## 텔레그램
 
-## 스크리너: HollyKR (Holly AI 한국 버전)
+- 봇: @hollykr_sig_bot (토큰: 8247602973)
+- Chat ID: 8060934494
+- 포맷: 강력/관심 2단계, ATR 목표/손절, 수급등급, 전략중복수
 
-- Trade Ideas Holly AI 모방 — 한국 시장 + 스윙(EOD) 특화
-- Phase 1: 12개 EOD 전략 (기술적 6 + Holly 원본 4 + 전설적 퀀트 2)
-- 파이프라인: 유니버스 → OHLCV → 전략 스캔 → 수급 등급 → 중복 제거 → 시그널
-- 수급 연동: A등급 → 신뢰도 +10%, D등급 → 경고 + 신뢰도 -15%
-- 텔레그램 알림: --telegram 옵션으로 시그널 자동 전송
+## 스케줄 (Windows 작업 스케줄러)
 
-## 스크리너: 페어 트레이딩
-
-- WICS 중분류 섹터 기반 (wiseindex.com API → .cache/wics_sectors.csv)
-- 파이프라인: 유니버스 필터 → OHLCV 수집 → 공적분 검정 → 안정성 검증 → Z-Score → 시그널
-- OLS log(P_A) = α + β×log(P_B) + ε → ADF 검정 (p<0.05)
-- 롤링 ADF 안정성 + OU 반감기(5~30일) + 멀티윈도우 Z-Score(20/60/120)
-- 롱 온리 (한국 공매도 제한), 비용 필터 0.84%
+- 14:40 (월~금): --auto --entry close --telegram
+- 18:00 (월~금): --nightly --entry close --csv
+- PC 켜져 있어야 작동
 
 ## Known Limitations
 
-- KRX OTP: 403/LOGOUT 반환 가능 → 폴백 자동 처리
-- FnGuide: 동시 요청 최대 10개 (MAX_WORKERS=5 × 2 ThreadPool)
-- FDR: timeout 옵션 없음 → socket.setdefaulttimeout() 사용
-- pykrx: 거래일/OHLCV 조회 불안정 → WICS는 wiseindex.com API로 대체
-- 네이버 수급: HTML 스크래핑 기반 (구조 변경 시 파싱 수정 필요)
-
-## Key Patterns
-
-- **폴백 체인**: 모든 데이터 소스에 다단계 폴백 구현
-- **pickle 캐시**: 날짜별 캐시로 반복 수집 방지
-- **증분 수집**: 이전 캐시 7일내 재사용, 신규 종목만 수집
-- **ThreadPoolExecutor**: 병렬 수집 (FnGuide, OHLCV)
-- **한글/영문 컬럼 호환**: indicators.py가 둘 다 지원
-- **스크리너 독립 구조**: 각 스크리너가 자체 config/run/output 보유, 공통 모듈 재사용
-- **수급 등급**: 외국인/기관 순매수 기반 A~D 등급, 시그널 신뢰도 조정
-- **텔레그램 알림**: python-telegram-bot 비동기 전송, 4096자 자동 분할
+- FDR: Yahoo Finance 기반, 장중 실시간 안 됨
+- 수급: 네이버 금융 스크래핑, HTML 변경 시 파싱 수정 필요
+- Phase 3 INTRADAY 12개: 분봉 필요, 미구현
+- Magic Formula/Piotroski: 스캐너 미연동 (별도 분기 리밸런싱 필요)

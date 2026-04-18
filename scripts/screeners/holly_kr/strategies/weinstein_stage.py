@@ -47,12 +47,12 @@ class WeinsteinStage(BaseStrategy):
             return None
 
         ep = entry_price or row['Close']
-        # 손절: 150일 이평 하회 시
-        stop = ma150.iloc[-1]
+        # 손절: ATR 기반 (추세추종이므로 3x ATR 넓은 손절)
+        _, stop_loss_pct = self._atr_target_stop(df, ep, stop_multiple=3.0)
 
         return self._make_signal(
             ticker, ticker_name, sector, ep,
-            target_pct=0.0, stop_loss_pct=(stop / ep - 1),
+            target_pct=0.0, stop_loss_pct=stop_loss_pct,
             hold_min=20, hold_max=120, confidence=0.75,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
         )

@@ -22,13 +22,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from scripts.screeners.holly_kr.scanner import run_scanner
 from scripts.screeners.holly_kr.output import print_signals, save_csv, save_json
 
-# 백테스트 검증 전략 (200일, 종가매매, 슬리피지+거래비용 포함)
-# [강력 매수] PF 1.2+ — 단독 매수 시그널
-STRONG_STRATEGIES = ['weinstein_stage', 'tailwind', 'close_to_a_cross']
+# 백테스트 검증 전략 (200일, ATR 기반, 종가매매, 슬리피지+거래비용 포함)
+# 기준: PF 1.0+ AND 총수익 10%+
+# [강력 매수] PF 1.2+
+STRONG_STRATEGIES = ['close_to_a_cross', 'weinstein_stage', 'tailwind', 'wake_up_call']
 
-# [관심 종목] PF 1.0~1.2 — 워치리스트, 본인 판단 필요
-WATCH_STRATEGIES = ['wake_up_call', 'darvas_box', 'nice_chart',
-                    'staggering_volume', 'trend_play', 'quarterback']
+# [관심 종목] PF 1.05~1.2 AND 총수익 10%+
+WATCH_STRATEGIES = ['darvas_box', 'volume_doesnt_lie', 'staggering_volume',
+                    'quarterback', 'trend_play', 'nice_chart']
 
 # 실전 모드 전체 (강력 + 관심)
 PROVEN_STRATEGIES = STRONG_STRATEGIES + WATCH_STRATEGIES
@@ -127,14 +128,19 @@ def main():
 
     elapsed = time.time() - start_time
 
-    # 강력/관심 태그 부여
+    # 강력/관심 분류 + 캡 적용 (강력 우선, 관심으로 채워서 총 10개)
+    strong = [s for s in signals if s.strategy_name in STRONG_STRATEGIES]
+    watch = [s for s in signals if s.strategy_name in WATCH_STRATEGIES]
+    strong.sort(key=lambda s: -s.confidence)
+    watch.sort(key=lambda s: -s.confidence)
+    strong_cap = strong[:5]
+    signals = strong_cap + watch[:10 - len(strong_cap)]
+
     for sig in signals:
         if sig.strategy_name in STRONG_STRATEGIES:
             sig.signal_tier = 'STRONG'
-        elif sig.strategy_name in WATCH_STRATEGIES:
-            sig.signal_tier = 'WATCH'
         else:
-            sig.signal_tier = 'OTHER'
+            sig.signal_tier = 'WATCH'
 
     print_signals(signals)
 

@@ -2,7 +2,7 @@
 HollyKR 유니버스 필터링
 
 조건: 보통주 + 스팩/리츠 제외 + 시총 1,000억 이상
-WICS 섹터 매핑 (있으면 붙임, 없어도 제외 안 함)
+섹터: KIS 업종 (primary) + WICS (fallback)
 당일 캐시 지원.
 """
 
@@ -12,16 +12,26 @@ from datetime import datetime
 import pandas as pd
 
 from scripts.krx_data import get_stock_master
+from scripts.kis_sector_data import load_sector_map as load_kis_sectors
 from scripts.screeners.holly_kr.config import MIN_MARKET_CAP, WICS_CACHE_FILE
 from config import CACHE_DIR
 
 
 def _load_wics_cache() -> dict:
-    """WICS 섹터 캐시 로드"""
+    """WICS 섹터 캐시 로드 (폴백용)"""
     if WICS_CACHE_FILE.exists():
         df = pd.read_csv(WICS_CACHE_FILE, dtype=str, encoding='utf-8-sig')
         return dict(zip(df['Code'], df['WICS_Sector']))
     return {}
+
+
+def _load_sector_map() -> dict:
+    """KIS 우선, WICS 폴백으로 종목→섹터 매핑 병합"""
+    kis = load_kis_sectors()
+    wics = _load_wics_cache()
+    # KIS가 없는 종목만 WICS로 보완
+    merged = {**wics, **kis}
+    return merged
 
 
 def get_universe(use_cache: bool = True) -> pd.DataFrame:
@@ -60,12 +70,12 @@ def get_universe(use_cache: bool = True) -> pd.DataFrame:
     df = df[df['시가총액'] >= MIN_MARKET_CAP].copy()
     print(f"  시총 {MIN_MARKET_CAP:,}억 이상: {len(df)}개")
 
-    # 3. WICS 섹터 매핑 (없어도 제외 안 함)
-    sector_map = _load_wics_cache()
+    # 3. 섹터 매핑 (KIS 우선, WICS 폴백 — 없어도 제외 안 함)
+    sector_map = _load_sector_map()
     df['Sector'] = df['종목코드'].map(sector_map).fillna('')
 
     mapped = (df['Sector'] != '').sum()
-    print(f"  WICS 섹터 매핑: {mapped}개 / {len(df)}개")
+    print(f"  섹터 매핑 (KIS+WICS): {mapped}개 / {len(df)}개")
 
     result = pd.DataFrame({
         'Code': df['종목코드'].values,

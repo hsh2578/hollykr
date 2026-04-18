@@ -127,7 +127,7 @@ def format_signal_message(signals, market_regime: str = '',
     # --- 관심 종목 (PF 1.0~1.2) ---
     if watch_sigs:
         lines.append("== 관심 종목 ==")
-        for s in watch_sigs[:10]:
+        for s in watch_sigs[:15]:
             lines.extend(_format_one_signal(s))
 
     # --- 기타 (분류 안 된 시그널) ---
@@ -146,15 +146,26 @@ def _format_one_signal(s) -> list:
     entry_label = '종가' if sig_mode == 'close' else '시가'
     sector_str = f" | {s.sector}" if s.sector else ''
 
+    target_price = s.entry_price * (1 + s.target_pct)
+    stop_price = s.entry_price * (1 + s.stop_loss_pct)
+
+    # 중복 전략 수 표시
+    overlap = ''
+    warnings_filtered = []
+    for w in (s.risk_warnings or []):
+        if '개전략' in w:
+            overlap = f" | {w}"
+        else:
+            warnings_filtered.append(w)
+
     lines = [
         f"[{s.strategy_name}] {s.ticker_name}({s.ticker}){sector_str}",
-        f"  {s.entry_price:,.0f}원({entry_label})"
-        f" | +{s.target_pct*100:.1f}%/-{abs(s.stop_loss_pct)*100:.1f}%"
-        f" | {s.hold_days_min}~{s.hold_days_max}일",
-        f"  신뢰도 {s.confidence:.0%} | 수급 {supply or '-'}",
+        f"  진입: {s.entry_price:,.0f}원({entry_label})",
+        f"  목표: {target_price:,.0f}원(+{s.target_pct*100:.1f}%) | 손절: {stop_price:,.0f}원(-{abs(s.stop_loss_pct)*100:.1f}%)",
+        f"  신뢰도 {s.confidence:.0%} | 수급 {supply or '-'}{overlap}",
     ]
-    if s.risk_warnings:
-        lines.append(f"  [!] {', '.join(s.risk_warnings)}")
+    if warnings_filtered:
+        lines.append(f"  [!] {', '.join(warnings_filtered)}")
     lines.append("")
     return lines
 

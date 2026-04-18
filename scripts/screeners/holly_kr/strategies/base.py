@@ -42,6 +42,45 @@ class BaseStrategy(ABC):
         """
         pass
 
+    @staticmethod
+    def _calc_atr(df: pd.DataFrame, period: int = 20) -> float:
+        """ATR (Average True Range) 계산"""
+        high = df['High']
+        low = df['Low']
+        close = df['Close']
+        tr = pd.concat([
+            high - low,
+            (high - close.shift(1)).abs(),
+            (low - close.shift(1)).abs(),
+        ], axis=1).max(axis=1)
+        atr = tr.rolling(period).mean().iloc[-1]
+        return float(atr) if not pd.isna(atr) else 0.0
+
+    def _atr_target_stop(self, df: pd.DataFrame, entry_price: float,
+                          target_multiple: float = 3.0,
+                          stop_multiple: float = 2.0) -> tuple:
+        """ATR 기반 동적 목표/손절 계산
+
+        Args:
+            target_multiple: ATR의 N배 = 목표 (기본 3배)
+            stop_multiple: ATR의 N배 = 손절 (기본 2배)
+
+        Returns:
+            (target_pct, stop_loss_pct)
+        """
+        atr = self._calc_atr(df)
+        if atr <= 0 or entry_price <= 0:
+            return 0.05, -0.03  # fallback
+
+        target_pct = (atr * target_multiple) / entry_price
+        stop_loss_pct = -(atr * stop_multiple) / entry_price
+
+        # 최소/최대 제한
+        target_pct = max(0.03, min(target_pct, 0.20))
+        stop_loss_pct = max(-0.15, min(stop_loss_pct, -0.02))
+
+        return round(target_pct, 4), round(stop_loss_pct, 4)
+
     def _make_signal(self, ticker: str, ticker_name: str, sector: str,
                      entry_price: float, target_pct: float, stop_loss_pct: float,
                      hold_min: int, hold_max: int, confidence: float,

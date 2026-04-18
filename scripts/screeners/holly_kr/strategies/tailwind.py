@@ -57,11 +57,11 @@ class Tailwind(BaseStrategy):
             return None
 
         ep = entry_price or row['Close']
-        stop = ep * 0.96  # MA20 바로 위에서 진입하므로 4% 고정 손절
+        target_pct, stop_loss_pct = self._atr_target_stop(df, ep, target_multiple=3.0, stop_multiple=2.0)
 
         return self._make_signal(
             ticker, ticker_name, sector, ep,
-            target_pct=0.05, stop_loss_pct=(stop / ep - 1),
+            target_pct=target_pct, stop_loss_pct=stop_loss_pct,
             hold_min=2, hold_max=5, confidence=0.65,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
         )

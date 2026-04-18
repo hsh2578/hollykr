@@ -103,12 +103,12 @@ class DarvasBox(BaseStrategy):
         box_height = box_top - box_bottom
         target = ep + box_height
         target_pct = max((target / ep - 1), 0.05)  # 최소 5% 목표
-        # 손절: 박스 하단 또는 entry x 0.95
-        stop = max(box_bottom, ep * 0.95)
+        # 손절: ATR 기반
+        _, stop_loss_pct = self._atr_target_stop(df, ep, stop_multiple=2.0)
 
         return self._make_signal(
             ticker, ticker_name, sector, ep,
-            target_pct=target_pct, stop_loss_pct=(stop / ep - 1),
+            target_pct=target_pct, stop_loss_pct=stop_loss_pct,
             hold_min=1, hold_max=10, confidence=0.70,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
         )

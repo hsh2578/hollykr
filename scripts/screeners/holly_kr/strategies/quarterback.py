@@ -44,11 +44,11 @@ class Quarterback(BaseStrategy):
             return None
 
         ep = entry_price or row['Close']
-        stop = ep * 0.93
+        target_pct, stop_loss_pct = self._atr_target_stop(df, ep, target_multiple=3.0, stop_multiple=2.0)
 
         return self._make_signal(
             ticker, ticker_name, sector, ep,
-            target_pct=0.07, stop_loss_pct=(stop / ep - 1),
+            target_pct=target_pct, stop_loss_pct=stop_loss_pct,
             hold_min=3, hold_max=7, confidence=0.65,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
         )

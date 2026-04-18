@@ -55,19 +55,27 @@ def _save_file_cache(cache: Dict[str, pd.DataFrame]):
 
 
 def _needs_update(df: pd.DataFrame) -> bool:
-    """캐시된 데이터가 오늘 날짜를 포함하는지 확인"""
+    """캐시된 데이터가 가장 최근 거래일을 포함하는지 확인"""
     if df is None or len(df) == 0:
         return True
-    last_date = df.index[-1]
+    last_date = df.index[-1].date()
     today = datetime.now().date()
-    # 주말이면 금요일 데이터면 OK
-    if today.weekday() >= 5:  # 토/일
-        return False
-    # 장 시작 전(9시 전)이면 어제 데이터면 OK
-    if datetime.now().hour < 9:
-        return (today - last_date.date()).days > 1
-    # 장중/장후: 오늘 데이터 필요
-    return last_date.date() < today
+    weekday = today.weekday()
+
+    # 예상되는 최신 거래일 계산 (토=5, 일=6)
+    if weekday == 5:      # 토
+        expected = today - timedelta(days=1)  # 금
+    elif weekday == 6:    # 일
+        expected = today - timedelta(days=2)  # 금
+    elif weekday == 0 and datetime.now().hour < 9:  # 월요일 장 시작 전
+        expected = today - timedelta(days=3)  # 금
+    elif datetime.now().hour < 9:  # 평일 장 시작 전
+        expected = today - timedelta(days=1)
+    else:
+        expected = today
+
+    # 캐시가 예상 거래일보다 오래됐으면 업데이트 필요
+    return last_date < expected
 
 
 # 시작 시 파일 캐시를 메모리에 로드
