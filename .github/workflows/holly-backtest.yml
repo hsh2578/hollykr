@@ -83,26 +83,50 @@ jobs:
           python - <<'PY'
           import os, glob, asyncio
           import pandas as pd
+
           files = sorted(glob.glob('data/holly_kr/backtest_summary_*.csv'))
           if not files:
               print('No backtest summary found')
               raise SystemExit(0)
           df = pd.read_csv(files[-1])
-          # 판정 컬럼 이름 탐색 (한/영 호환)
-          verdict_col = next((c for c in df.columns if c in ('판정', 'Verdict', 'verdict')), None)
-          passed = df[df[verdict_col] == 'PASS'] if verdict_col else df.head(0)
-          overfit = df[df[verdict_col] == 'OVERFIT'] if verdict_col else df.head(0)
-          failed = df[df[verdict_col] == 'FAIL'] if verdict_col else df.head(0)
 
-          lines = [f'HollyKR 일일 백테스트 결과', '']
-          lines.append(f'PASS {len(passed)} / OVERFIT {len(overfit)} / FAIL {len(failed)}')
+          # CSV 구조: 각 전략마다 2행 (Train, Test 순서)
+          # backtest.py의 판정 기준: win_rate>=0.4 AND profit_factor>=1.2
+          def is_pass(trades, wr, pf):
+              return trades > 0 and wr >= 0.4 and pf >= 1.2
+
+          passed, overfit, failed, nosig = [], [], [], []
+          for name, g in df.groupby('strategy', sort=False):
+              g = g.reset_index(drop=True)
+              if len(g) < 2:
+                  nosig.append(name); continue
+              tr = g.iloc[0]
+              te = g.iloc[1]
+              train_ok = is_pass(tr['trades'], tr['win_rate'], tr['profit_factor'])
+              test_ok  = is_pass(te['trades'], te['win_rate'], te['profit_factor'])
+              if te['trades'] == 0 and tr['trades'] == 0:
+                  nosig.append(name)
+              elif test_ok:
+                  passed.append((name, te['profit_factor'], te['total_return']))
+              elif train_ok and not test_ok:
+                  overfit.append((name, te['profit_factor'], te['total_return']))
+              else:
+                  failed.append((name, te['profit_factor'], te['total_return']))
+
+          passed.sort(key=lambda x: -x[1])
+
+          lines = ['HollyKR 일일 백테스트 결과', '']
+          lines.append(f'PASS {len(passed)} / OVERFIT {len(overfit)} / FAIL {len(failed)} / 시그널없음 {len(nosig)}')
           lines.append('')
-          lines.append('[PASS 전략]')
-          for _, r in passed.iterrows():
-              name = r.get('전략', r.get('Strategy', '?'))
-              pf = r.get('TestPF', '-')
-              ret = r.get('Test수익', r.get('TestReturn', '-'))
-              lines.append(f'  - {name}: PF {pf} / {ret}')
+          lines.append('[PASS 전략 (Test 기준)]')
+          for name, pf, ret in passed:
+              lines.append(f'  - {name}: PF {pf:.2f} / 수익 {ret*100:+.1f}%')
+
+          if overfit:
+              lines.append('')
+              lines.append('[과적합 주의 — Train만 통과]')
+              for name, pf, ret in overfit[:5]:
+                  lines.append(f'  - {name}: TestPF {pf:.2f}')
 
           msg = '\n'.join(lines)
           print(msg)
