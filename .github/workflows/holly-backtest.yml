@@ -87,7 +87,7 @@ jobs:
           overfit = df[df[verdict_col] == 'OVERFIT'] if verdict_col else df.head(0)
           failed = df[df[verdict_col] == 'FAIL'] if verdict_col else df.head(0)
 
-          lines = [f'HollyKR 주간 백테스트 결과', '']
+          lines = [f'HollyKR 일일 백테스트 결과', '']
           lines.append(f'PASS {len(passed)} / OVERFIT {len(overfit)} / FAIL {len(failed)}')
           lines.append('')
           lines.append('[PASS 전략]')
