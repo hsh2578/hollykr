@@ -149,10 +149,13 @@ GitHub Actions 사용 시 GitHub repo Settings → Secrets에 동일 키 등록.
 ## 스케줄 (2중 운영)
 
 **GitHub Actions (주 실행)**
-- 평일 14:20 KST → Daily Scan (`holly-daily.yml`)
-- 평일 20:00 KST → Daily Backtest (`holly-backtest.yml`)
+- Daily Scan: cron `20 3 * * 1-5` (UTC 03:20 = KST 12:20 스케줄)
+  → GitHub Actions 지연 평균 2시간, 실제 ~14:20 KST 실행 예상
+- Daily Backtest: cron `0 11 * * 1-5` (UTC 11:00 = KST 20:00 스케줄)
+  → 지연 ~1시간, 실제 ~21:00 KST 실행
 - 첫 실행 25~40분 (캐시 구축), 이후 3~8분
 - 수동 트리거: `gh workflow run holly-daily.yml --repo hsh2578/hollykr`
+- **주의**: GitHub Actions cron은 SLA 없음. 피크타임 지연으로 스케줄을 앞당겨 설정.
 
 **Windows 작업 스케줄러 (백업 가능)**
 - `deploy/hollykr_scan.bat` / `hollykr_nightly.bat`
