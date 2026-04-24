@@ -149,7 +149,7 @@ GitHub Actions 사용 시 GitHub repo Settings → Secrets에 동일 키 등록.
 ## 스케줄 (2중 운영)
 
 **GitHub Actions (주 실행)**
-- 평일 14:40 KST → Daily Scan (`holly-daily.yml`)
+- 평일 14:20 KST → Daily Scan (`holly-daily.yml`)
 - 평일 20:00 KST → Daily Backtest (`holly-backtest.yml`)
 - 첫 실행 25~40분 (캐시 구축), 이후 3~8분
 - 수동 트리거: `gh workflow run holly-daily.yml --repo hsh2578/hollykr`

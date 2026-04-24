@@ -2,8 +2,8 @@ name: HollyKR Daily Scan
 
 on:
   schedule:
-    # 평일 14:40 KST = 05:40 UTC
-    - cron: '40 5 * * 1-5'
+    # 평일 14:20 KST = 05:20 UTC
+    - cron: '20 5 * * 1-5'
   workflow_dispatch:
 
 jobs:
