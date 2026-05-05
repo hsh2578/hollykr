@@ -27,8 +27,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from scripts.ohlcv_data import get_ohlcv, flush_cache
 from scripts.screeners.holly_kr.universe import get_universe
-from scripts.screeners.holly_kr.config import LOOKBACK_DAYS, OUTPUT_DIR, ROUND_TRIP_COST
-from scripts.screeners.holly_kr.scanner import PHASE1_STRATEGIES, PHASE2_STRATEGIES
+from scripts.screeners.holly_kr.config import (
+    LOOKBACK_DAYS, OUTPUT_DIR, ROUND_TRIP_COST,
+    TRAILING_STOP_PCT, PARTIAL_PROFIT_PCT, FIRST_DAY_LOSS_PCT,
+    GAP_DOWN_EXIT_AT_OPEN,
+)
+from scripts.screeners.holly_kr.scanner import PHASE1_STRATEGIES, PHASE2_STRATEGIES, ALL_STRATEGIES
 
 
 # ============================================================================
@@ -37,7 +41,7 @@ from scripts.screeners.holly_kr.scanner import PHASE1_STRATEGIES, PHASE2_STRATEG
 
 @dataclass
 class Trade:
-    """개별 거래 기록."""
+    """개별 거래 기록 (실전 청산 일치)."""
     strategy: str
     ticker: str
     name: str
@@ -45,12 +49,19 @@ class Trade:
     entry_price: float
     exit_date: str = ''
     exit_price: float = 0.0
-    exit_reason: str = ''      # target, stop_loss, time_exit
-    pnl_pct: float = 0.0       # 수익률 (0.03 = 3%)  - 거래비용 차감 후
+    exit_reason: str = ''      # target, stop_loss, time_exit, gap_down, first_day, trailing, partial+trailing 등
+    pnl_pct: float = 0.0       # 최종 수익률 (50% 익절 + 잔량 청산 합산, 거래비용 차감 후)
     hold_days: int = 0
     target_pct: float = 0.0
     stop_loss_pct: float = 0.0
     hold_days_max: int = 10    # 전략별 최대 보유일
+
+    # 실전 청산 트래킹
+    target_hit: bool = False             # 목표가 한 번이라도 도달
+    partial_done: bool = False           # 50% 익절 완료
+    partial_exit_price: float = 0.0      # 50% 청산가 (목표가 도달 시점, 슬리피지 적용)
+    max_close_during_hold: float = 0.0   # 보유 중 최고 종가 (트레일링용)
+    trail_stop_price: float = 0.0        # 트레일링 스탑 가격
 
 
 @dataclass
@@ -70,6 +81,9 @@ class StrategyReport:
     avg_win: float = 0.0
     avg_loss: float = 0.0
     profit_factor: float = 0.0
+    pf_ci_lower: float = 0.0       # 95% CI 하한 (bootstrap)
+    pf_ci_upper: float = 0.0       # 95% CI 상한
+    pf_significant: bool = False   # PF lower CI > 1.0 (진짜 알파)
     max_drawdown: float = 0.0
     avg_hold_days: float = 0.0
     sharpe_ratio: float = 0.0
@@ -77,6 +91,36 @@ class StrategyReport:
     best_trade: float = 0.0
     worst_trade: float = 0.0
     trades: List[Trade] = field(default_factory=list)
+
+
+def bootstrap_pf_ci(pnls: List[float], n_bootstrap: int = 1000,
+                    ci: float = 0.95, seed: int = 42) -> tuple:
+    """Trade-level PnL 부트스트랩 → PF의 신뢰구간.
+
+    Returns:
+        (lower, upper) — ci% 신뢰구간
+    """
+    if len(pnls) < 5:
+        return 0.0, 0.0
+    rng = np.random.default_rng(seed)  # 결정적 결과 보장
+    pf_samples = []
+    n = len(pnls)
+    pnls_arr = np.array(pnls)
+    for _ in range(n_bootstrap):
+        idx = rng.integers(0, n, size=n)
+        sample = pnls_arr[idx]
+        wins = sample[sample > 0].sum()
+        losses = abs(sample[sample <= 0].sum())
+        if losses > 0:
+            pf_samples.append(wins / losses)
+        elif wins > 0:
+            pf_samples.append(20.0)  # 손실 없으면 큰 값 (cap)
+    if not pf_samples:
+        return 0.0, 0.0
+    alpha = (1 - ci) / 2
+    lower = float(np.percentile(pf_samples, alpha * 100))
+    upper = float(np.percentile(pf_samples, (1 - alpha) * 100))
+    return lower, upper
 
 
 # ============================================================================
@@ -94,6 +138,39 @@ def _get_slippage_pct(market_cap: float) -> float:
         return 0.002
     else:
         return 0.005
+
+
+def _close_trade(trade: 'Trade', final_exit_price: float, exit_date: str,
+                 reason: str, slippage_pct: float):
+    """거래 종료 — 50% 익절 분과 잔량 청산 분 PnL 합산.
+
+    50% 부분익절이 발생했으면:
+        총수익 = 0.5 × (partial_exit - entry)/entry + 0.5 × (final_exit - entry)/entry - 거래비용
+    아니면 (전량 청산):
+        총수익 = (final_exit - entry)/entry - 거래비용
+    """
+    trade.exit_price = final_exit_price
+    trade.exit_date = exit_date
+    trade.exit_reason = reason
+
+    entry = trade.entry_price
+    if entry <= 0:
+        trade.pnl_pct = 0.0
+        return
+
+    if trade.partial_done and trade.partial_exit_price > 0:
+        partial_ret = (trade.partial_exit_price - entry) / entry
+        final_ret = (final_exit_price - entry) / entry
+        trade.pnl_pct = (
+            PARTIAL_PROFIT_PCT * partial_ret
+            + (1 - PARTIAL_PROFIT_PCT) * final_ret
+            - ROUND_TRIP_COST
+        )
+        # 부분익절 발생 시 reason 라벨에 표기
+        if reason in ('time_exit', 'trailing', 'trailing_gap'):
+            trade.exit_reason = f'partial_{reason}'
+    else:
+        trade.pnl_pct = (final_exit_price - entry) / entry - ROUND_TRIP_COST
 
 
 def _simulate_strategy(strategy, universe_ohlcv: Dict[str, pd.DataFrame],
@@ -143,7 +220,7 @@ def _simulate_strategy(strategy, universe_ohlcv: Dict[str, pd.DataFrame],
             if scan_end < 60:
                 continue
 
-            # 활성 거래가 있으면 청산 확인
+            # 활성 거래가 있으면 청산 확인 (실전 ExitManager와 일치)
             if active_trade is not None:
                 current_idx = scan_end
                 if current_idx >= len(df):
@@ -152,41 +229,106 @@ def _simulate_strategy(strategy, universe_ohlcv: Dict[str, pd.DataFrame],
                 current = df.iloc[current_idx]
                 days_held = active_trade.hold_days + 1
                 active_trade.hold_days = days_held
+                today_open = current['Open']
+                today_high = current['High']
+                today_low = current['Low']
+                today_close = current['Close']
+                today_date = str(current.name.date()) if hasattr(current.name, 'date') else ''
 
-                # 손절 확인 (장중 저가)  - 슬리피지 적용
-                if active_trade.stop_loss_pct != 0:
-                    stop_price = active_trade.entry_price * (1 + active_trade.stop_loss_pct)
-                    if current['Low'] <= stop_price:
-                        exit_price = stop_price * (1 - slippage_pct)
-                        active_trade.exit_date = str(current.name.date()) if hasattr(current.name, 'date') else ''
-                        active_trade.exit_price = exit_price
-                        active_trade.pnl_pct = (exit_price - active_trade.entry_price) / active_trade.entry_price - ROUND_TRIP_COST
-                        active_trade.exit_reason = 'stop_loss'
+                # 보유 중 최고 종가 갱신 (트레일링용)
+                active_trade.max_close_during_hold = max(
+                    active_trade.max_close_during_hold, today_close
+                )
+
+                stop_price = active_trade.entry_price * (1 + active_trade.stop_loss_pct)
+                target_price = active_trade.entry_price * (1 + active_trade.target_pct)
+
+                # ============================================================
+                # 우선순위 1: 갭다운 (시초가 < 손절가) → 시초가 즉시 청산
+                # ============================================================
+                if GAP_DOWN_EXIT_AT_OPEN and today_open <= stop_price:
+                    exit_price = today_open * (1 - slippage_pct)
+                    _close_trade(active_trade, exit_price, today_date,
+                                 reason='gap_down', slippage_pct=slippage_pct)
+                    trades.append(active_trade)
+                    active_trade = None
+                    continue
+
+                # ============================================================
+                # 우선순위 2: 손절 (장중 저가) — target 미도달 상태에서만
+                # (target 도달 후에는 trailing stop이 손절 역할)
+                # ============================================================
+                if not active_trade.target_hit and today_low <= stop_price:
+                    exit_price = stop_price * (1 - slippage_pct)
+                    _close_trade(active_trade, exit_price, today_date,
+                                 reason='stop_loss', slippage_pct=slippage_pct)
+                    trades.append(active_trade)
+                    active_trade = None
+                    continue
+
+                # ============================================================
+                # 우선순위 3: 목표가 도달 시 50% 익절 (한 번만)
+                # ============================================================
+                if not active_trade.target_hit and today_high >= target_price:
+                    active_trade.target_hit = True
+                    active_trade.partial_done = True
+                    active_trade.partial_exit_price = target_price * (1 - slippage_pct)
+                    # 트레일링 스탑 초기화 (목표 도달 시점부터)
+                    active_trade.trail_stop_price = (
+                        active_trade.max_close_during_hold * (1 - TRAILING_STOP_PCT)
+                    )
+                    # 50%만 청산, 나머지 50%는 계속 보유 → 다른 청산 조건 평가 진행
+
+                # ============================================================
+                # 우선순위 4: 트레일링 스탑 (목표 도달 후만)
+                # ============================================================
+                if active_trade.target_hit:
+                    new_trail = active_trade.max_close_during_hold * (1 - TRAILING_STOP_PCT)
+                    active_trade.trail_stop_price = max(
+                        active_trade.trail_stop_price, new_trail
+                    )
+                    # 트레일링 갭다운
+                    if GAP_DOWN_EXIT_AT_OPEN and today_open <= active_trade.trail_stop_price:
+                        exit_price = today_open * (1 - slippage_pct)
+                        _close_trade(active_trade, exit_price, today_date,
+                                     reason='trailing_gap', slippage_pct=slippage_pct)
+                        trades.append(active_trade)
+                        active_trade = None
+                        continue
+                    # 트레일링 장중 저가
+                    if today_low <= active_trade.trail_stop_price:
+                        exit_price = active_trade.trail_stop_price * (1 - slippage_pct)
+                        _close_trade(active_trade, exit_price, today_date,
+                                     reason='trailing', slippage_pct=slippage_pct)
                         trades.append(active_trade)
                         active_trade = None
                         continue
 
-                # 목표 확인 (장중 고가)  - 슬리피지 적용
-                if active_trade.target_pct != 0:
-                    target_price = active_trade.entry_price * (1 + active_trade.target_pct)
-                    if current['High'] >= target_price:
-                        exit_price = target_price * (1 - slippage_pct)
-                        active_trade.exit_date = str(current.name.date()) if hasattr(current.name, 'date') else ''
-                        active_trade.exit_price = exit_price
-                        active_trade.pnl_pct = (exit_price - active_trade.entry_price) / active_trade.entry_price - ROUND_TRIP_COST
-                        active_trade.exit_reason = 'target'
-                        trades.append(active_trade)
-                        active_trade = None
-                        continue
+                # ============================================================
+                # 우선순위 5: First-day -3% 룰 (Minervini)
+                # 진입 다음날(days_held=1) 음봉 -3% 마감 → 그 다음날 시가 청산
+                # ============================================================
+                if days_held == 1 and not active_trade.target_hit:
+                    first_day_return = (today_close - active_trade.entry_price) / active_trade.entry_price
+                    if first_day_return <= FIRST_DAY_LOSS_PCT:
+                        next_idx = current_idx + 1
+                        if next_idx < len(df):
+                            next_row = df.iloc[next_idx]
+                            next_date = str(next_row.name.date()) if hasattr(next_row.name, 'date') else ''
+                            exit_price = next_row['Open'] * (1 - slippage_pct)
+                            _close_trade(active_trade, exit_price, next_date,
+                                         reason='first_day_3pct', slippage_pct=slippage_pct)
+                            trades.append(active_trade)
+                            active_trade = None
+                            continue
 
-                # 최대 보유일 초과  - Trade에 저장된 전략별 hold_days_max 사용
-                max_hold = active_trade.hold_days_max
-                if days_held >= max_hold:
-                    exit_price = current['Close'] * (1 - slippage_pct)
-                    active_trade.exit_date = str(current.name.date()) if hasattr(current.name, 'date') else ''
-                    active_trade.exit_price = exit_price
-                    active_trade.pnl_pct = (exit_price - active_trade.entry_price) / active_trade.entry_price - ROUND_TRIP_COST
-                    active_trade.exit_reason = 'time_exit'
+                # ============================================================
+                # 우선순위 6: 최대 보유일 초과
+                # ============================================================
+                if days_held >= active_trade.hold_days_max:
+                    exit_price = today_close * (1 - slippage_pct)
+                    _close_trade(active_trade, exit_price, today_date,
+                                 reason='time_exit', slippage_pct=slippage_pct)
                     trades.append(active_trade)
                     active_trade = None
                     continue
@@ -240,11 +382,10 @@ def _simulate_strategy(strategy, universe_ohlcv: Dict[str, pd.DataFrame],
         # 기간 끝났는데 아직 열린 거래가 있으면 강제 청산  - 슬리피지 적용
         if active_trade is not None:
             last = df.iloc[-1]
+            last_date = str(last.name.date()) if hasattr(last.name, 'date') else ''
             exit_price = last['Close'] * (1 - slippage_pct)
-            active_trade.exit_date = str(last.name.date()) if hasattr(last.name, 'date') else ''
-            active_trade.exit_price = exit_price
-            active_trade.pnl_pct = (exit_price - active_trade.entry_price) / active_trade.entry_price - ROUND_TRIP_COST
-            active_trade.exit_reason = 'forced_close'
+            _close_trade(active_trade, exit_price, last_date,
+                         reason='forced_close', slippage_pct=slippage_pct)
             trades.append(active_trade)
 
     return trades
@@ -284,6 +425,14 @@ def _calc_report(strategy, trades: List[Trade], period: str = '') -> StrategyRep
     total_loss = abs(sum(loss_pnls))
     report.profit_factor = total_profit / total_loss if total_loss > 0 else 999
 
+    # PF 95% 신뢰구간 (bootstrap, deterministic seed)
+    if len(pnls) >= 5:
+        lo, hi = bootstrap_pf_ci(pnls, n_bootstrap=1000)
+        report.pf_ci_lower = round(lo, 2)
+        report.pf_ci_upper = round(hi, 2)
+        # 진짜 알파: 95% CI 하한 > 1.0 (PF가 거의 확실히 1보다 큼)
+        report.pf_significant = lo > 1.0
+
     # MDD (누적 수익 기준)
     cumulative = np.cumsum(pnls)
     peak = np.maximum.accumulate(cumulative)
@@ -309,8 +458,14 @@ def _calc_report(strategy, trades: List[Trade], period: str = '') -> StrategyRep
 # OHLCV 수집
 # ============================================================================
 
-def _load_universe_ohlcv(universe: pd.DataFrame, days: int = 300) -> Dict[str, pd.DataFrame]:
-    """유니버스 전종목 OHLCV 로드 (캐시 활용)."""
+def _load_universe_ohlcv(universe: pd.DataFrame, days: int = 300,
+                          end_date: Optional[pd.Timestamp] = None) -> Dict[str, pd.DataFrame]:
+    """유니버스 전종목 OHLCV 로드 (캐시 활용).
+
+    Args:
+        end_date: 백테스트 기준일 (None=오늘). 지정 시 모든 OHLCV가 end_date까지로 잘림.
+                  비결정성 방지 (cache 자라도 동일 결과 보장)
+    """
     ohlcv_dict = {}
     total = len(universe)
 
@@ -318,7 +473,11 @@ def _load_universe_ohlcv(universe: pd.DataFrame, days: int = 300) -> Dict[str, p
         ticker = row['Code']
         df = get_ohlcv(ticker, days=days, use_cache=True)
         if df is not None and len(df) > 0:
-            ohlcv_dict[ticker] = df
+            # end_date 고정으로 결정성 보장
+            if end_date is not None:
+                df = df[df.index <= end_date]
+            if len(df) > 0:
+                ohlcv_dict[ticker] = df
         if i % 200 == 0:
             print(f"    OHLCV 로드: {i}/{total} ({len(ohlcv_dict)}개)")
 
@@ -403,24 +562,33 @@ def _print_summary_split(reports: List[StrategyReport]):
     rows = []
     overfit_count = 0
     pass_count = 0
+    significant_count = 0  # 통계적으로 진짜 알파 (PF lower CI > 1.0)
 
     for name in strategy_names:
         tr = train_reports.get(name)
         te = test_reports.get(name)
 
-        # Train 판정
-        train_pass = (tr and tr.total_trades > 0
+        # Train 판정 (느슨)
+        train_pass = (tr and tr.total_trades >= 10
                       and tr.win_rate >= 0.4 and tr.profit_factor >= 1.2)
-        # Test 판정 (최종 판정 기준)
-        test_pass = (te and te.total_trades > 0
+        # Test 판정 (강화: 거래 30+ AND PF 1.2+ AND 승률 40%+)
+        test_pass = (te and te.total_trades >= 30
                      and te.win_rate >= 0.4 and te.profit_factor >= 1.2)
+        # 진짜 알파 판정 (가장 엄격: Test PF lower CI > 1.0)
+        test_significant = (te and te.total_trades >= 30
+                           and te.pf_significant
+                           and te.win_rate >= 0.4)
 
-        if train_pass and not test_pass:
+        if test_significant:
+            verdict = 'ALPHA'  # 통계적 의미 있는 진짜 알파
+            pass_count += 1
+            significant_count += 1
+        elif test_pass:
+            verdict = 'PASS'  # 점추정 PASS이지만 통계적 의미 X
+            pass_count += 1
+        elif train_pass and not test_pass:
             verdict = 'OVERFIT'
             overfit_count += 1
-        elif test_pass:
-            verdict = 'PASS'
-            pass_count += 1
         else:
             verdict = 'FAIL'
 
@@ -442,23 +610,25 @@ def _print_summary_split(reports: List[StrategyReport]):
             row['TrainPF'] = '-'
             row['Train수익'] = '-'
 
-        # Test 열
+        # Test 열 (PF + 95% CI)
         if te and te.total_trades > 0:
             row['Test거래'] = te.total_trades
             row['Test승률'] = f'{te.win_rate:.1%}'
             row['TestPF'] = f'{te.profit_factor:.2f}'
+            row['PF_CI'] = f'[{te.pf_ci_lower:.2f},{te.pf_ci_upper:.2f}]'
             row['Test수익'] = f'{te.total_return:+.1%}'
         else:
             row['Test거래'] = 0
             row['Test승률'] = '-'
             row['TestPF'] = '-'
+            row['PF_CI'] = '-'
             row['Test수익'] = '-'
 
         rows.append(row)
 
-    # 판정 기준 정렬: PASS > OVERFIT > FAIL
-    verdict_order = {'PASS': 0, 'OVERFIT': 1, 'FAIL': 2}
-    rows.sort(key=lambda r: verdict_order.get(r['판정'], 3))
+    # 판정 기준 정렬: ALPHA > PASS > OVERFIT > FAIL
+    verdict_order = {'ALPHA': 0, 'PASS': 1, 'OVERFIT': 2, 'FAIL': 3}
+    rows.sort(key=lambda r: verdict_order.get(r['판정'], 4))
 
     total_strategies = len(set(r.name for r in reports))
     no_signal = total_strategies - len(strategy_names)
@@ -468,10 +638,39 @@ def _print_summary_split(reports: List[StrategyReport]):
     print(f"{'='*110}")
     print(tabulate(rows, headers='keys', tablefmt='simple', stralign='left'))
 
-    print(f"\n통과(PASS, Test 기준): {pass_count}개 / 전체 {total_strategies}개")
+    print(f"\n통과(PASS+ALPHA, Test 기준): {pass_count}개 / 전체 {total_strategies}개")
+    print(f"  └ 통계적 진짜 알파 (PF 95% CI 하한 > 1.0): {significant_count}개")
     print(f"과적합(OVERFIT  - Train PASS, Test FAIL): {overfit_count}개")
     fail_count = len(strategy_names) - pass_count - overfit_count
     print(f"실패(FAIL): {fail_count}개")
+
+    # ============================================================
+    # Phase 9: Survivorship bias 정직성 경고
+    # ============================================================
+    print("\n" + "=" * 90)
+    print("  ⚠️  SURVIVORSHIP BIAS 경고 (Phase 9 — 정직성 보정)")
+    print("=" * 90)
+    print("  현재 유니버스: '오늘 시점' 시총 1,000억+ 종목 (살아남은 종목 풀)")
+    print("  실제 영향:")
+    print("    - 200일 동안 상폐된 종목 → 백테스트 풀에서 누락")
+    print("    - 200일 전 시총 작았던 종목이 급등하여 현재 1000억+ → '운 좋게' 포함")
+    print("    - 결과: Test PF가 실전보다 약 20-30% 부풀려져 있음")
+    print()
+    print("  보정 추정값 (PF × 0.75 가정):")
+    for r in rows[:5]:  # 상위 5개만
+        if r.get('TestPF', '-') != '-':
+            try:
+                pf = float(r['TestPF'])
+                adjusted = pf * 0.75
+                marker = "★" if r['판정'] == 'ALPHA' else " "
+                print(f"    {marker} {r['전략']:<22s} | 보고 PF {pf:.2f} → 추정 실전 PF {adjusted:.2f}")
+            except (ValueError, KeyError):
+                continue
+    print()
+    print("  진짜 알파 판정도 보수적으로 해석 필요:")
+    print("    - PF 95% CI 하한 × 0.75 > 1.0 인 전략만 진짜 alpha")
+    print("    - 한국거래소 historical 종목 마스터 통합 시 정확 측정 가능 (Phase 9 미완)")
+    print("=" * 90)
     if no_signal > 0:
         inactive_names = [r.name for r in reports
                           if r.total_trades == 0 and r.period in ('Train', '')]
@@ -512,12 +711,154 @@ def save_csv(reports: List[StrategyReport], trades_all: List[Trade]):
 
 
 # ============================================================================
+# 워크포워드
+# ============================================================================
+
+def run_walk_forward(num_windows: int = 4, window_offset_days: int = 60,
+                      test_days: int = 200, sample_size: int = 200,
+                      entry_mode: str = 'close', strategy_filter: str = None,
+                      save: bool = False) -> Dict[str, list]:
+    """워크포워드 검증: 다중 윈도우로 각 전략 평가.
+
+    Args:
+        num_windows: 윈도우 수 (기본 4)
+        window_offset_days: 윈도우 간 슬라이딩 거리 (기본 60일)
+        test_days: 각 윈도우 백테스트 기간
+
+    Returns:
+        {strategy_name: [report_w1, report_w2, ...]}
+    """
+    print("=" * 70)
+    print(f"  워크포워드 백테스트: {num_windows} 윈도우 × {test_days}일 × {window_offset_days}일 슬라이딩")
+    print("=" * 70)
+
+    overall_start = time.time()
+
+    # 1. OHLCV 한 번만 로드 (모든 윈도우에서 재사용)
+    universe = get_universe()
+    if sample_size > 0 and sample_size < len(universe):
+        universe = universe.nlargest(sample_size, 'MarketCap').reset_index(drop=True)
+        print(f"  유니버스: 시총 상위 {sample_size}개")
+
+    print(f"\n  OHLCV 로드 (최대 LOOKBACK_DAYS={LOOKBACK_DAYS} + offset)...")
+    full_ohlcv = _load_universe_ohlcv(
+        universe, days=LOOKBACK_DAYS + num_windows * window_offset_days,
+        end_date=None
+    )
+    print(f"  로드 완료: {len(full_ohlcv)}개 종목")
+    flush_cache()
+
+    # 2. 각 윈도우 실행
+    today = pd.Timestamp.now().normalize()
+    window_results: Dict[str, list] = {}  # {name: [test_report, ...]}
+    aggregated_test_trades: Dict[str, list] = {}  # {name: [trades, ...]}
+
+    for w in range(num_windows):
+        window_end = today - pd.Timedelta(days=w * window_offset_days)
+        print(f"\n{'─' * 70}")
+        print(f"  윈도우 {w+1}/{num_windows} | end_date = {window_end.date()}")
+        print(f"{'─' * 70}")
+
+        # 윈도우별 OHLCV 슬라이싱
+        windowed_ohlcv = {
+            t: df[df.index <= window_end]
+            for t, df in full_ohlcv.items()
+        }
+        # 길이 부족 종목 제외
+        windowed_ohlcv = {
+            t: df for t, df in windowed_ohlcv.items()
+            if len(df) >= test_days + 60
+        }
+
+        reports = run_backtest(
+            test_days=test_days, strategy_filter=strategy_filter,
+            save=False, sample_size=sample_size, split=True,
+            entry_mode=entry_mode, end_date=window_end,
+            ohlcv_dict=windowed_ohlcv, universe=universe,
+        )
+
+        # Test 리포트만 모음
+        for r in reports:
+            if r.period == 'Test':
+                window_results.setdefault(r.name, []).append(r)
+                aggregated_test_trades.setdefault(r.name, []).extend(r.trades)
+
+    # 3. 집계 출력
+    elapsed = time.time() - overall_start
+    print(f"\n{'=' * 70}")
+    print(f"  워크포워드 종합 결과 (4 윈도우 Test 누적)")
+    print(f"{'=' * 70}")
+
+    summary_rows = []
+    alpha_count = 0
+    consistent_count = 0  # 4 윈도우 중 3+ 통과
+
+    for name, w_reports in window_results.items():
+        if not w_reports:
+            continue
+        # 윈도우별 PASS 횟수 (PF >= 1.2 + 승률 >= 40% + 거래 >= 5)
+        wins = sum(1 for r in w_reports
+                   if r.total_trades >= 5 and r.profit_factor >= 1.2 and r.win_rate >= 0.4)
+        # 누적 trades로 통계 의미 평가
+        all_trades = aggregated_test_trades.get(name, [])
+        if not all_trades:
+            continue
+        all_pnls = [t.pnl_pct for t in all_trades]
+        total = len(all_pnls)
+        agg_wr = sum(1 for p in all_pnls if p > 0) / total if total else 0
+        agg_pf = (sum(p for p in all_pnls if p > 0)
+                  / abs(sum(p for p in all_pnls if p <= 0))
+                  if any(p <= 0 for p in all_pnls) else 999.0)
+        agg_lo, agg_hi = bootstrap_pf_ci(all_pnls, n_bootstrap=1000) if total >= 5 else (0, 0)
+
+        if total >= 30 and agg_lo > 1.0 and wins >= 3:
+            verdict = 'ALPHA'
+            alpha_count += 1
+            consistent_count += 1
+        elif wins >= 3 and total >= 20:
+            verdict = 'CONSISTENT'
+            consistent_count += 1
+        elif total >= 20 and agg_pf >= 1.2:
+            verdict = 'BORDERLINE'
+        else:
+            verdict = 'FAIL'
+
+        summary_rows.append({
+            '판정': verdict,
+            '전략': name[:22],
+            '윈도우_PASS': f'{wins}/{num_windows}',
+            '누적거래': total,
+            '누적승률': f'{agg_wr:.1%}',
+            '누적PF': f'{agg_pf:.2f}',
+            'PF_CI95': f'[{agg_lo:.2f},{agg_hi:.2f}]',
+        })
+
+    summary_rows.sort(key=lambda r: {'ALPHA': 0, 'CONSISTENT': 1, 'BORDERLINE': 2, 'FAIL': 3}[r['판정']])
+
+    print(tabulate(summary_rows, headers='keys', tablefmt='simple', stralign='left'))
+    print(f"\n진짜 알파 (4중 3+ PASS + PF 95% CI 하한 > 1.0): {alpha_count}개")
+    print(f"일관성 있는 PASS (4중 3+): {consistent_count}개")
+    print(f"\n총 소요 시간: {elapsed:.1f}초")
+
+    if save:
+        today_str = datetime.now().strftime('%Y-%m-%d')
+        wf_path = OUTPUT_DIR / f'walkforward_summary_{today_str}.csv'
+        pd.DataFrame(summary_rows).to_csv(wf_path, index=False, encoding='utf-8-sig')
+        print(f"  CSV 저장: {wf_path}")
+
+    return window_results
+
+
+# ============================================================================
 # 메인
 # ============================================================================
 
 def run_backtest(test_days: int = 120, strategy_filter: str = None,
                   save: bool = False, sample_size: int = 200,
-                  split: bool = True, entry_mode: str = 'open') -> List[StrategyReport]:
+                  split: bool = True, entry_mode: str = 'open',
+                  end_date: Optional[pd.Timestamp] = None,
+                  ohlcv_dict: Optional[Dict[str, pd.DataFrame]] = None,
+                  universe: Optional[pd.DataFrame] = None) -> List[StrategyReport]:
     """
     백테스트 실행.
 
@@ -527,10 +868,14 @@ def run_backtest(test_days: int = 120, strategy_filter: str = None,
         save: CSV 저장 여부
         sample_size: 유니버스 샘플 크기 (0=전체, N=시총 상위 N개)
         split: True면 Train(70%)/Test(30%) OOS 분할 검증
+        end_date: 백테스트 기준일 (None=오늘). 비결정성 방지용
+        ohlcv_dict, universe: 외부 주입 (워크포워드에서 재사용)
     """
     print("=" * 60)
     print("  HollyKR 백테스트 엔진")
     print(f"  테스트 기간: 최근 {test_days}거래일")
+    if end_date is not None:
+        print(f"  기준일 (end_date): {end_date.date() if hasattr(end_date, 'date') else end_date}")
     if split:
         train_days = int(test_days * 0.7)
         test_days_oos = test_days - train_days
@@ -539,22 +884,24 @@ def run_backtest(test_days: int = 120, strategy_filter: str = None,
 
     start = time.time()
 
-    # 1. 유니버스
-    universe = get_universe()
-    if sample_size > 0 and sample_size < len(universe):
-        universe = universe.nlargest(sample_size, 'MarketCap').reset_index(drop=True)
-        print(f"  샘플링: 시총 상위 {sample_size}개 종목")
+    # 1. 유니버스 (외부 주입 우선)
+    if universe is None:
+        universe = get_universe()
+        if sample_size > 0 and sample_size < len(universe):
+            universe = universe.nlargest(sample_size, 'MarketCap').reset_index(drop=True)
+            print(f"  샘플링: 시총 상위 {sample_size}개 종목")
 
-    # 2. OHLCV 로드
-    print(f"\n  OHLCV 로드 중 ({len(universe)}개 종목)...")
-    ohlcv_dict = _load_universe_ohlcv(universe, days=LOOKBACK_DAYS)
-    print(f"  OHLCV 로드 완료: {len(ohlcv_dict)}개 종목")
+    # 2. OHLCV 로드 (외부 주입 우선, 워크포워드에서 재사용)
+    if ohlcv_dict is None:
+        print(f"\n  OHLCV 로드 중 ({len(universe)}개 종목)...")
+        ohlcv_dict = _load_universe_ohlcv(universe, days=LOOKBACK_DAYS, end_date=end_date)
+        print(f"  OHLCV 로드 완료: {len(ohlcv_dict)}개 종목")
 
     # OHLCV 캐시 저장
     flush_cache()
 
     # 3. 전략 목록
-    all_strategies = PHASE1_STRATEGIES + PHASE2_STRATEGIES
+    all_strategies = list(ALL_STRATEGIES)  # Phase 7 신규 5개 포함, 총 37개
     if strategy_filter:
         all_strategies = [s for s in all_strategies if s.name == strategy_filter]
         if not all_strategies:
@@ -650,13 +997,28 @@ if __name__ == '__main__':
     parser.add_argument('--entry', type=str, default='open',
                         choices=['open', 'close'],
                         help='진입 모드: open=다음날 시가, close=당일 종가')
+    parser.add_argument('--walk-forward', type=int, default=0,
+                        help='워크포워드 윈도우 수 (0=비활성, 4=권장). 결정성 + 다중 윈도우 검증')
+    parser.add_argument('--window-offset', type=int, default=60,
+                        help='워크포워드 윈도우 슬라이딩 거리 (일, 기본 60)')
 
     args = parser.parse_args()
-    run_backtest(
-        test_days=args.days,
-        strategy_filter=args.strategy,
-        save=args.csv,
-        sample_size=args.sample,
-        split=not args.no_split,
-        entry_mode=args.entry,
-    )
+    if args.walk_forward > 0:
+        run_walk_forward(
+            num_windows=args.walk_forward,
+            window_offset_days=args.window_offset,
+            test_days=args.days,
+            sample_size=args.sample,
+            entry_mode=args.entry,
+            strategy_filter=args.strategy,
+            save=args.csv,
+        )
+    else:
+        run_backtest(
+            test_days=args.days,
+            strategy_filter=args.strategy,
+            save=args.csv,
+            sample_size=args.sample,
+            split=not args.no_split,
+            entry_mode=args.entry,
+        )

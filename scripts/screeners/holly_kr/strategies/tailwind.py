@@ -15,7 +15,11 @@ class Tailwind(BaseStrategy):
 
     def scan(self, df: pd.DataFrame, ticker: str, ticker_name: str,
              sector: str = "", entry_price: float = 0.0) -> Optional[Signal]:
-        if len(df) < 65:
+        if len(df) < 220:
+            return None
+
+        # Stage 2 거시 필터
+        if not self._check_stage_2(df):
             return None
 
         row = df.iloc[-1]
@@ -51,13 +55,12 @@ class Tailwind(BaseStrategy):
         if row['Close'] <= row['Open']:
             return None
 
-        # 거래량 > 20일 평균
-        vol_avg = df['Volume'].rolling(20).mean().iloc[-1]
-        if row['Volume'] < vol_avg:
+        # 거래량: 50일 평균 1.3~5.0× (추세 진입은 climax 적당)
+        if not self._check_volume_with_climax(df, min_mult=1.3, max_mult=5.0, period=50):
             return None
 
         ep = entry_price or row['Close']
-        target_pct, stop_loss_pct = self._atr_target_stop(df, ep, target_multiple=3.0, stop_multiple=2.0)
+        target_pct, stop_loss_pct = self._atr_target_stop(df, ep)  # trend_following → 5x/2x
 
         reason = f"MA5>MA20>MA60 정배열 · MA20 터치 반등 (이격 {ma20_dist*100:.1f}%) · 양봉"
 

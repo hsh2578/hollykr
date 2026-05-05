@@ -15,7 +15,11 @@ class CloseToACross(BaseStrategy):
 
     def scan(self, df: pd.DataFrame, ticker: str, ticker_name: str,
              sector: str = "", entry_price: float = 0.0) -> Optional[Signal]:
-        if len(df) < 55:
+        if len(df) < 220:  # Stage 2 필터용 200일 데이터 필요
+            return None
+
+        # Stage 2 거시 필터 (Weinstein/Minervini 통합)
+        if not self._check_stage_2(df):
             return None
 
         row = df.iloc[-1]
@@ -35,13 +39,13 @@ class CloseToACross(BaseStrategy):
         if daily_ret < 0.02:
             return None
 
-        # 거래량 > 20일 평균 × 1.5
-        vol_avg = df['Volume'].rolling(20).mean().iloc[-1]
-        if row['Volume'] < vol_avg * 2.0:
+        # 거래량: 50일 평균 1.3~6.0× (climax 컷, 완화)
+        if not self._check_volume_with_climax(df, min_mult=1.3, max_mult=6.0, period=50):
             return None
+        vol_avg = df['Volume'].rolling(20).mean().iloc[-1]
 
         ep = entry_price or row['Close']
-        target_pct, stop_loss_pct = self._atr_target_stop(df, ep, target_multiple=3.0, stop_multiple=2.0)
+        target_pct, stop_loss_pct = self._atr_target_stop(df, ep)  # category='breakout' → 5x/2x (RR 2.5)
 
         vol_ratio = row['Volume'] / vol_avg if vol_avg > 0 else 0
         reason = f"MA5>MA50 골든크로스 · 당일 +{daily_ret*100:.1f}% 상승 · 거래량 {vol_ratio:.1f}배"

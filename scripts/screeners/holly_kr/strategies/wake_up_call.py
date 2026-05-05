@@ -15,7 +15,12 @@ class WakeUpCall(BaseStrategy):
 
     def scan(self, df: pd.DataFrame, ticker: str, ticker_name: str,
              sector: str = "", entry_price: float = 0.0) -> Optional[Signal]:
-        if len(df) < 25:
+        if len(df) < 220:
+            return None
+
+        # 200일 SMA 위 (Stage 4 차단). Stage 2 풀필터는 너무 빡세서 200일선만)
+        ma200 = df['Close'].rolling(200).mean().iloc[-1]
+        if pd.isna(ma200) or df['Close'].iloc[-1] <= ma200:
             return None
 
         row = df.iloc[-1]
@@ -31,17 +36,17 @@ class WakeUpCall(BaseStrategy):
         if ma5 <= ma20:
             return None
 
-        # 거래량 > 20일 평균 × 1.5
-        vol_avg = df['Volume'].rolling(20).mean().iloc[-1]
-        if row['Volume'] < vol_avg * 1.5:
+        # 거래량: 50일 평균 1.5~5.0× (climax 컷)
+        if not self._check_volume_with_climax(df, min_mult=1.5, max_mult=5.0, period=50):
             return None
+        vol_avg = df['Volume'].rolling(20).mean().iloc[-1]
 
         # 양봉
         if row['Close'] <= row['Open']:
             return None
 
         ep = entry_price or row['Close']
-        target_pct, stop_loss_pct = self._atr_target_stop(df, ep, target_multiple=3.0, stop_multiple=2.0)
+        target_pct, stop_loss_pct = self._atr_target_stop(df, ep)  # breakout → 5x/2x (RR 2.5)
 
         vol_ratio = row['Volume'] / vol_avg if vol_avg > 0 else 0
         reason = f"20일 신고가 갱신 · MA5>MA20 정배열 · 거래량 {vol_ratio:.1f}배 · 양봉"

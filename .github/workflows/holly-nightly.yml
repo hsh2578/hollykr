@@ -1,0 +1,86 @@
+name: HollyKR Nightly Strategy Selection
+
+# 매일 평일 19:00 KST: 32개 전략 모두 60일 평가 → Top 10 ACTIVE 선정 → 다음날 14:20 스캔이 사용
+# 사용자 컨셉: 32개 영구 후보 + 일별 점수 기반 동적 선정
+
+on:
+  schedule:
+    # GitHub Actions cron 평균 ~1시간 지연 고려. UTC 09:00 = KST 18:00 스케줄, 실제 ~19:00 KST 실행 예상
+    - cron: '0 9 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  nightly-selection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TZ: Asia/Seoul
+
+    steps:
+      - name: Set timezone to KST
+        run: |
+          sudo timedatectl set-timezone Asia/Seoul || true
+          date
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Restore HollyKR caches
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: holly-cache-${{ github.run_number }}
+          restore-keys: |
+            holly-cache-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run nightly strategy selection (60-day, all 32 strategies)
+        env:
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+          KIS_BASE_URL: https://openapivts.koreainvestment.com:29443
+          PYTHONIOENCODING: utf-8
+        run: |
+          python -m scripts.screeners.holly_kr.run --nightly --entry close --csv
+
+      - name: Commit ACTIVE strategies (today's selection)
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          # active_strategies.json은 캐시 디렉토리에 저장됨 → repo로 복사
+          mkdir -p data/holly_kr/active
+          if [ -f .cache/active_strategies.json ]; then
+            cp .cache/active_strategies.json data/holly_kr/active/active_strategies.json
+            git add data/holly_kr/active/active_strategies.json
+            if git diff --staged --quiet; then
+              echo "No changes to ACTIVE list"
+            else
+              git commit -m "야간 ACTIVE 전략 갱신 (Phase 5 동적 선정)"
+              git push
+            fi
+          else
+            echo "No active_strategies.json generated"
+          fi
+
+      - name: Upload nightly cache as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-cache-snapshot
+          path: |
+            .cache/active_strategies.json
+            data/holly_kr/
+          retention-days: 7
+          if-no-files-found: ignore

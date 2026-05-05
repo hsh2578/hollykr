@@ -44,12 +44,15 @@ class LivermorePivot(BaseStrategy):
             return None
 
         ep = entry_price or row['Close']
-        # 피라미딩: 1차 50% 진입, 손절 = entry x 0.97 (3%)
-        stop = ep * 0.97
+        # legendary livermore_pivot preset (4.0/1.5, RR ~2.5)
+        atr_target_pct, atr_stop_pct = self._atr_target_stop(df, ep)
+        # 손절: -3% (Livermore 정석) vs ATR×1.5, 더 가까운 쪽
+        stop_loss_pct = max(-0.03, atr_stop_pct)
+        target_pct = atr_target_pct
 
         return self._make_signal(
             ticker, ticker_name, sector, ep,
-            target_pct=0.0, stop_loss_pct=-0.03,
+            target_pct=target_pct, stop_loss_pct=stop_loss_pct,
             hold_min=5, hold_max=90, confidence=0.70,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
         )

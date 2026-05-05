@@ -60,6 +60,15 @@ from scripts.screeners.holly_kr.strategies.balloon_under_water import BalloonUnd
 from scripts.screeners.holly_kr.strategies.neo_breakout import NeoBreakout
 from scripts.screeners.holly_kr.strategies.neo_pullback import NeoPullback
 
+# ============================================================================
+# Phase 7 신규 5개 (사이트 stock-screener-kr 한국화)
+# ============================================================================
+from scripts.screeners.holly_kr.strategies.ma_convergence import MAConvergence
+from scripts.screeners.holly_kr.strategies.new_high_52w_approach import NewHigh52wApproach
+from scripts.screeners.holly_kr.strategies.bottom_breakout import BottomBreakout
+from scripts.screeners.holly_kr.strategies.volume_dry_up import VolumeDryUp
+from scripts.screeners.holly_kr.strategies.box_range_watch import BoxRangeWatch
+
 # Phase 1: EOD 12개
 PHASE1_STRATEGIES = [
     PushingTheSpring(), Engulfing(), YesterdayHammer(), SnapBackLong(),
@@ -76,8 +85,14 @@ PHASE2_STRATEGIES = [
     PullingTheArrow(), BalloonUnderWater(), NeoBreakout(), NeoPullback(),
 ]
 
-# 전체 전략
-ALL_STRATEGIES = PHASE1_STRATEGIES + PHASE2_STRATEGIES
+# Phase 7 신규 5개
+PHASE7_STRATEGIES = [
+    MAConvergence(), NewHigh52wApproach(), BottomBreakout(),
+    VolumeDryUp(), BoxRangeWatch(),
+]
+
+# 전체 전략 (총 37개)
+ALL_STRATEGIES = PHASE1_STRATEGIES + PHASE2_STRATEGIES + PHASE7_STRATEGIES
 
 
 _regime_info = None  # run_scanner에서 설정
@@ -189,13 +204,13 @@ def run_scanner(phase: str = 'all',
     if regime == '하락장':
         print("  → 하락장 감지 — 시그널 생성 최소화, 신뢰도 50% 할인 적용")
 
-    # 1. 전략 목록 결정
+    # 1. 전략 목록 결정 (Phase 7 신규 5개 포함, 총 37개)
     if phase == 'phase1':
         strategies = list(PHASE1_STRATEGIES)
     elif phase == 'phase2':
         strategies = list(PHASE2_STRATEGIES)
     else:
-        strategies = list(PHASE1_STRATEGIES + PHASE2_STRATEGIES)
+        strategies = list(ALL_STRATEGIES)
 
     # 2. 유니버스
     universe = get_universe()

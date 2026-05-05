@@ -47,8 +47,8 @@ class WeinsteinStage(BaseStrategy):
             return None
 
         ep = entry_price or row['Close']
-        # 손절: ATR 기반 (추세추종이므로 3x ATR 넓은 손절)
-        _, stop_loss_pct = self._atr_target_stop(df, ep, stop_multiple=3.0)
+        # legendary preset 사용 (ATR×5/×2, RR 2.5). 트레일링이 사실상 무한 보유 역할
+        target_pct, stop_loss_pct = self._atr_target_stop(df, ep)
 
         vol_avg = df['Volume'].rolling(20).mean().iloc[-1]
         vol_ratio = row['Volume'] / vol_avg if vol_avg > 0 else 0
@@ -56,7 +56,7 @@ class WeinsteinStage(BaseStrategy):
 
         return self._make_signal(
             ticker, ticker_name, sector, ep,
-            target_pct=0.0, stop_loss_pct=stop_loss_pct,
+            target_pct=target_pct, stop_loss_pct=stop_loss_pct,
             hold_min=20, hold_max=120, confidence=0.75,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
             reason=reason,

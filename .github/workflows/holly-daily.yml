@@ -43,7 +43,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run daily scanner (proven strategies, close-entry, telegram)
+      - name: Sync ACTIVE strategies from repo to cache (Phase 5)
+        run: |
+          mkdir -p .cache
+          if [ -f data/holly_kr/active/active_strategies.json ]; then
+            cp data/holly_kr/active/active_strategies.json .cache/active_strategies.json
+            echo "ACTIVE strategies loaded from nightly selection:"
+            cat .cache/active_strategies.json | python -m json.tool
+          else
+            echo "No nightly ACTIVE file found - --auto will use FALLBACK strategies"
+          fi
+
+      - name: Run daily scanner (auto mode, dynamic ACTIVE, telegram)
         env:
           KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
           KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
@@ -52,7 +63,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PYTHONIOENCODING: utf-8
         run: |
-          python -m scripts.screeners.holly_kr.run --proven --entry close --telegram
+          python -m scripts.screeners.holly_kr.run --auto --entry close --telegram
 
       - name: Upload cache as artifact (debug)
         if: always()

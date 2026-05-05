@@ -100,11 +100,13 @@ class DarvasBox(BaseStrategy):
             return None
 
         ep = entry_price or row['Close']
-        box_height = box_top - box_bottom
-        target = ep + box_height
-        target_pct = max((target / ep - 1), 0.05)  # 최소 5% 목표
-        # 손절: ATR 기반
-        _, stop_loss_pct = self._atr_target_stop(df, ep, stop_multiple=2.0)
+        # 손절: 박스 하단 -0.3% (Darvas 정석) vs ATR×2 cap, 더 가까운 쪽
+        box_stop_pct = (box_bottom * 0.997 / ep) - 1
+        atr_target_pct, atr_stop_pct = self._atr_target_stop(df, ep)  # legendary darvas → 5x/2x
+        stop_loss_pct = max(box_stop_pct, atr_stop_pct, -0.08)
+        # target: ATR×5 (박스 높이 target은 OOS 약함 → 2주차 검증으로 폐기)
+        # base._make_signal이 RR 2.5 자동 보장
+        target_pct = atr_target_pct
 
         vol_avg = df['Volume'].rolling(20).mean().iloc[-1]
         vol_ratio = row['Volume'] / vol_avg if vol_avg > 0 else 0

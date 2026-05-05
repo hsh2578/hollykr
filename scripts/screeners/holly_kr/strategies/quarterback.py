@@ -44,7 +44,7 @@ class Quarterback(BaseStrategy):
             return None
 
         ep = entry_price or row['Close']
-        target_pct, stop_loss_pct = self._atr_target_stop(df, ep, target_multiple=3.0, stop_multiple=2.0)
+        target_pct, stop_loss_pct = self._atr_target_stop(df, ep)  # pullback → 3x/1.5x (RR 2.0)
 
         reason = (f"20일 고점 대비 -{pullback*100:.1f}% 풀백 · "
                   f"RSI14 {rsi14_val:.0f} · RSI5({rsi5_val:.0f})>RSI14 모멘텀 전환 · 양봉")

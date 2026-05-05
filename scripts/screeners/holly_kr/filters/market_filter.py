@@ -113,28 +113,86 @@ def _calc_foreign_flow(df_kospi: Optional[pd.DataFrame]) -> str:
     return 'neutral'
 
 
+def _check_kill_switch_conditions(df_kospi: Optional[pd.DataFrame]) -> dict:
+    """Kill Switch 조건 점검 (Phase 6).
+
+    Returns:
+        {
+            'kill_switch': bool,
+            'reasons': List[str],
+            'kospi_5d_return': float,
+            'kospi_below_200ma': bool,
+            'volatility_panic': bool,
+        }
+    """
+    out = {
+        'kill_switch': False,
+        'reasons': [],
+        'kospi_5d_return': 0.0,
+        'kospi_below_200ma': False,
+        'volatility_panic': False,
+    }
+    if df_kospi is None or len(df_kospi) < 200:
+        return out
+
+    close = df_kospi['Close']
+
+    # 1. 5일 누적 수익률 < -5%
+    if len(close) >= 6:
+        ret_5d = (close.iloc[-1] / close.iloc[-6]) - 1
+        out['kospi_5d_return'] = float(ret_5d)
+        if ret_5d <= -0.05:
+            out['kill_switch'] = True
+            out['reasons'].append(f"KOSPI 5일 누적 {ret_5d*100:.1f}% (≤-5%)")
+
+    # 2. KOSPI < 200일 SMA AND 200일 SMA 우하향
+    ma200 = close.rolling(200).mean()
+    if not pd.isna(ma200.iloc[-1]):
+        below_200 = close.iloc[-1] < ma200.iloc[-1]
+        out['kospi_below_200ma'] = below_200
+        if below_200 and len(close) >= 220:
+            ma200_now = ma200.iloc[-1]
+            ma200_1m_ago = ma200.iloc[-21]
+            if ma200_1m_ago > ma200_now:  # 200일 SMA 우하향
+                out['kill_switch'] = True
+                out['reasons'].append("KOSPI 200일 SMA 하향 + 우하향 (Stage 4)")
+
+    # 3. 변동성 panic (>35% 연율화)
+    vol = _calc_volatility(df_kospi)
+    if vol >= 35:
+        out['volatility_panic'] = True
+        out['kill_switch'] = True
+        out['reasons'].append(f"KOSPI 연율화 변동성 {vol:.0f}% (≥35% panic)")
+
+    return out
+
+
 def get_market_regime() -> dict:
     """
-    시장 레짐 판별 (v4.0).
+    시장 레짐 판별 (Phase 6 강화).
 
     Returns:
         {
             'kospi_trend': 'up' | 'down' | 'unknown',
             'kosdaq_trend': 'up' | 'down' | 'unknown',
-            'regime': '상승장_저변동' | '상승장_고변동' | '횡보장' | '하락장',
-            'kospi_volatility': float (연율화 %),
-            'kosdaq_volatility': float (연율화 %),
+            'regime': '강한상승' | '상승장_저변동' | '상승장_고변동' | '횡보장' | '완만하락' | '강한하락',
+            'kospi_volatility': float,
+            'kosdaq_volatility': float,
             'kospi_bullish': bool,
-            'foreign_flow': 'inflow' | 'outflow' | 'neutral',
-            'category_weights': dict,     # 카테고리별 가중치
-            'bear_cash_weight': float,    # 하락장일 때 최소 현금 비율
+            'foreign_flow': str,
+            'category_weights': dict,
+            'bear_cash_weight': float,
+            'kill_switch': bool,        # Phase 6: 시그널 송출 동결 신호
+            'kill_reasons': List[str],   # Kill Switch 발동 사유
+            'kospi_5d_return': float,
+            'kospi_below_200ma': bool,
         }
     """
     result = {}
     df_kospi = None
 
     for name, ticker in [('kospi', 'KS11'), ('kosdaq', 'KQ11')]:
-        df = _fetch_index(ticker)
+        df = _fetch_index(ticker, days=300)  # 200일 SMA 계산용
         if name == 'kospi':
             df_kospi = df
 
@@ -150,21 +208,31 @@ def get_market_regime() -> dict:
     # 외국인 수급 방향
     result['foreign_flow'] = _calc_foreign_flow(df_kospi)
 
+    # Kill Switch 점검
+    kill_info = _check_kill_switch_conditions(df_kospi)
+    result['kill_switch'] = kill_info['kill_switch']
+    result['kill_reasons'] = kill_info['reasons']
+    result['kospi_5d_return'] = kill_info['kospi_5d_return']
+    result['kospi_below_200ma'] = kill_info['kospi_below_200ma']
+
     # ---------------------------------------------------------------
-    # 레짐 판별 로직
+    # 5단계 레짐 판별
     # ---------------------------------------------------------------
     kospi_up = result.get('kospi_trend') == 'up'
     kosdaq_up = result.get('kosdaq_trend') == 'up'
     avg_vol = (result.get('kospi_volatility', 15) + result.get('kosdaq_volatility', 15)) / 2
     low_vol = avg_vol < 20
 
-    # KOSPI와 KOSDAQ 모두 고려
     both_up = kospi_up and kosdaq_up
     either_up = kospi_up or kosdaq_up
     both_down = not kospi_up and not kosdaq_up
 
-    if both_down and not low_vol:
-        regime = '하락장'
+    if kill_info['kill_switch']:
+        regime = '강한하락'
+    elif both_down and not low_vol:
+        regime = '완만하락'
+    elif both_up and low_vol and result['kospi_5d_return'] > 0.03:
+        regime = '강한상승'
     elif either_up and low_vol:
         regime = '상승장_저변동'
     elif either_up and not low_vol:
@@ -174,13 +242,24 @@ def get_market_regime() -> dict:
     else:
         regime = '횡보장'
 
-    # 외국인 대규모 이탈 시 하락장 격상
-    if result['foreign_flow'] == 'outflow' and both_down:
-        regime = '하락장'
+    # 외국인 대규모 이탈 + 둘 다 하락 → 강한하락 격상
+    if result['foreign_flow'] == 'outflow' and both_down and not kill_info['kill_switch']:
+        regime = '완만하락'
 
     result['regime'] = regime
-    result['category_weights'] = REGIME_WEIGHTS.get(regime, REGIME_WEIGHTS['횡보장'])
-    result['bear_cash_weight'] = BEAR_CASH_WEIGHT if regime == '하락장' else 0.0
+    # 5단계 매핑 (기존 4단계 카테고리 가중치 재사용)
+    weight_map = {
+        '강한상승': REGIME_WEIGHTS['상승장_저변동'],
+        '상승장_저변동': REGIME_WEIGHTS['상승장_저변동'],
+        '상승장_고변동': REGIME_WEIGHTS['상승장_고변동'],
+        '횡보장': REGIME_WEIGHTS['횡보장'],
+        '완만하락': REGIME_WEIGHTS['하락장'],
+        '강한하락': REGIME_WEIGHTS['하락장'],
+    }
+    result['category_weights'] = weight_map.get(regime, REGIME_WEIGHTS['횡보장'])
+    result['bear_cash_weight'] = (
+        BEAR_CASH_WEIGHT if regime in ('완만하락', '강한하락') else 0.0
+    )
 
     return result
 

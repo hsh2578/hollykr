@@ -23,15 +23,15 @@ from scripts.screeners.holly_kr.filters.market_filter import (
 )
 
 # ============================================================================
-# 설정
+# 설정 (Phase 5: 사용자 컨셉 — 32개 영구 후보, 점수 기반 Top N)
 # ============================================================================
 LOOKBACK_DAYS = 60          # 룩백 기간 (거래일, 약 3개월)
-MIN_WIN_RATE = 0.0          # 승률 제한 없음
-MIN_PROFIT_FACTOR = 1.05    # 수익팩터 최소 1.05
-MIN_TOTAL_RETURN = 0.10     # 총수익 최소 10%
+MIN_WIN_RATE = 0.0          # 승률 제한 없음 (Top N으로 자연 선별)
+MIN_PROFIT_FACTOR = 1.0     # PF 최소 1.0 (손익분기) — passed 라벨용
+MIN_TOTAL_RETURN = 0.0      # 총수익 음수만 아니면 OK
 MAX_ACTIVE = 10             # 하루 최대 활성 전략
-MIN_ACTIVE = 3              # 하루 최소 활성 전략
-HYSTERESIS_MIN_PERIODS = 2  # 활성화: 3개 서브기간 중 최소 2개 통과 필요
+MIN_ACTIVE = 5              # 하루 최소 활성 전략 (사용자 시그널 충분히)
+HYSTERESIS_MIN_PERIODS = 1  # 3 서브기간 중 1개만 통과해도 OK (관대하게)
 
 
 @dataclass
@@ -190,16 +190,18 @@ def _calc_metrics(
     # 히스테리시스: 서브기간 최소 2/3 통과해야 활성화
     metrics.passed = base_passed and (sub_period_passes >= HYSTERESIS_MIN_PERIODS)
 
-    # 복합 점수: 정규화된 가중합 (스케일 통일)
+    # 복합 점수 (Phase 5 강화: 표본 크기 가중 ↑, 워크포워드 결과 반영)
+    # 핵심: PF × sqrt(거래수) × 승률 보정 — 통계적으로 의미있는 전략 우선
     norm_wr = metrics.win_rate  # 0~1
     norm_pf = min(metrics.profit_factor, 3.0) / 3.0  # 0~1 (3 이상은 캡)
     norm_rw = metrics.regime_weight  # 0.4~1.3 → 그대로 사용
-    norm_sc = np.log1p(metrics.signal_count) / np.log1p(100)  # 0~1 (100건 기준)
+    # 표본 가중: sqrt 기준 (log보다 더 강하게 표본 큰 전략 우대)
+    norm_sc = min(np.sqrt(metrics.signal_count) / 10.0, 1.0)  # 100건 = 1.0
     metrics.composite_score = (
-        0.3 * norm_wr
-        + 0.3 * norm_pf
-        + 0.2 * norm_rw
-        + 0.2 * min(norm_sc, 1.0)
+        0.25 * norm_wr
+        + 0.30 * norm_pf
+        + 0.15 * norm_rw
+        + 0.30 * norm_sc  # 표본 가중 0.2 → 0.3 (통계 안정성)
     )
 
     return metrics
@@ -318,26 +320,23 @@ def select_strategies(
               f"RW={rw:.1f} Score={m.composite_score:.3f} "
               f"Sub={period_passes}/3 [{status}]")
 
-    # 1단계: 최소 기준 통과 전략
-    passed = [m for m in all_metrics if m.passed]
+    # Phase 5 사용자 컨셉: 32개 모두 영구 후보. 점수 순 Top N 선정.
+    #   - "passed" 라벨은 통계적 합격 표시용 (참고 정보)
+    #   - 실제 ACTIVE 선정은 composite_score 순위로만 결정
+    #   - 거래수 0인 전략은 평가 불가 → 후순위
+    rated = [m for m in all_metrics if m.signal_count > 0]
+    rated.sort(key=lambda m: -m.composite_score)
 
-    # 2단계: 복합 점수 기준 정렬
-    passed.sort(key=lambda m: -m.composite_score)
+    # Top max_active 선정 (passed 무관)
+    selected_metrics = rated[:max_active]
 
-    # 3단계: 최대/최소 제한
-    if len(passed) > max_active:
-        selected_metrics = passed[:max_active]
-    elif len(passed) < min_active:
-        # 최소 기준 미달이어도 점수 상위 전략 추가
-        all_sorted = sorted(all_metrics, key=lambda m: -m.composite_score)
-        selected_metrics = list(passed)
-        for m in all_sorted:
+    # 너무 적으면 거래수 0 전략도 통계적 PROVEN 우선순위로 추가
+    if len(selected_metrics) < min_active:
+        unrated = [m for m in all_metrics if m.signal_count == 0]
+        for m in unrated:
             if len(selected_metrics) >= min_active:
                 break
-            if m not in selected_metrics and m.signal_count > 0:
-                selected_metrics.append(m)
-    else:
-        selected_metrics = passed
+            selected_metrics.append(m)
 
     # 전략 객체 매핑
     name_to_strategy = {s.name: s for s in strategies}
@@ -347,9 +346,14 @@ def select_strategies(
         if m.strategy_name in name_to_strategy
     ]
 
-    print(f"\n  통과 전략: {len(passed)}개 / 전체 {len(strategies)}개")
-    print(f"  활성 전략: {len(selected_strategies)}개")
-    for m in selected_metrics:
-        print(f"    - {m.strategy_name} (Score={m.composite_score:.3f})")
+    passed_count = sum(1 for m in all_metrics if m.passed)
+    print(f"\n  전체 후보: {len(strategies)}개 (모두 영구 보존)")
+    print(f"  거래 발생 전략: {len(rated)}개")
+    print(f"  통계적 PASS 라벨: {passed_count}개 (참고용)")
+    print(f"  오늘의 ACTIVE (Top {max_active}): {len(selected_strategies)}개")
+    for i, m in enumerate(selected_metrics, 1):
+        pass_mark = "PASS" if m.passed else "    "
+        print(f"    {i:2d}. [{pass_mark}] {m.strategy_name:<25s} Score={m.composite_score:.3f} "
+              f"(WR={m.win_rate:.1%} PF={m.profit_factor:.2f} N={m.signal_count})")
 
     return selected_strategies, all_metrics

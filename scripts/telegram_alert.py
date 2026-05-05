@@ -168,10 +168,13 @@ def _format_one_signal(s) -> list:
     else:
         price_line = f"  진입: {s.entry_price:,.0f}원({entry_label})"
 
+    pos_pct = getattr(s, 'position_size_pct', 0) or 0
+    pos_line = f" | 권장 포지션 {pos_pct*100:.1f}%" if pos_pct > 0 else ""
+
     lines = [
         f"[{s.strategy_name}] {s.ticker_name}({s.ticker}){sector_str}",
         price_line,
-        f"  목표: {target_price:,.0f}원(+{s.target_pct*100:.1f}%) | 손절: {stop_price:,.0f}원(-{abs(s.stop_loss_pct)*100:.1f}%)",
+        f"  목표: {target_price:,.0f}원(+{s.target_pct*100:.1f}%) | 손절: {stop_price:,.0f}원(-{abs(s.stop_loss_pct)*100:.1f}%){pos_line}",
         f"  신뢰도 {s.confidence:.0%} | 수급 {supply or '-'}{overlap}",
     ]
 

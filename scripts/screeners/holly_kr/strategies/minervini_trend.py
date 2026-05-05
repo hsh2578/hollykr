@@ -78,12 +78,16 @@ class MinerviniTrend(BaseStrategy):
             return None
 
         ep = entry_price or row['Close']
-        # 손절: 50일 이평 하회 시 또는 entry x 0.92 (8%)
-        stop = max(ma50, ep * 0.92)
+        # legendary minervini preset (5.0/2.0, RR 2.5)
+        atr_target_pct, atr_stop_pct = self._atr_target_stop(df, ep)
+        # 손절: 50일 이평 하회 (Minervini 정석) vs ATR×2 vs -8%
+        ma50_stop_pct = (ma50 / ep) - 1
+        stop_loss_pct = max(ma50_stop_pct, atr_stop_pct, -0.08)
+        target_pct = atr_target_pct
 
         return self._make_signal(
             ticker, ticker_name, sector, ep,
-            target_pct=0.0, stop_loss_pct=(stop / ep - 1),
+            target_pct=target_pct, stop_loss_pct=stop_loss_pct,
             hold_min=10, hold_max=60, confidence=0.75,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
         )
