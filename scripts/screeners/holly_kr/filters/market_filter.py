@@ -63,15 +63,43 @@ BEAR_CASH_WEIGHT = 0.5
 
 
 def _fetch_index(ticker: str, days: int = 120) -> Optional[pd.DataFrame]:
-    """지수 OHLCV 가져오기."""
+    """지수 OHLCV 가져오기.
+
+    Phase 10-1: Yahoo Finance 우선 사용 (FDR/KRX API는 LOGOUT 에러 빈번).
+    Yahoo 실패 시 FDR 폴백.
+
+    ticker 매핑:
+        'KS11' → '^KS11' (KOSPI)
+        'KQ11' → '^KQ11' (KOSDAQ)
+    """
     end = datetime.now()
     start = end - timedelta(days=days)
+
+    # 1차: Yahoo Finance (안정적)
+    try:
+        import yfinance as yf
+        yahoo_ticker = f'^{ticker}'  # KS11 → ^KS11
+        period_str = '1y' if days > 200 else ('6mo' if days > 90 else '3mo')
+        yf_df = yf.Ticker(yahoo_ticker).history(period=period_str)
+        if yf_df is not None and len(yf_df) > 50:
+            # Yahoo 컬럼: Open/High/Low/Close/Volume (그대로 사용 가능)
+            # timezone 제거 (FDR 호환)
+            if yf_df.index.tz is not None:
+                yf_df.index = yf_df.index.tz_localize(None)
+            return yf_df
+    except Exception as e:
+        import logging
+        logging.warning(f"[market_filter] Yahoo {ticker} fetch 실패: {e}")
+
+    # 2차 폴백: FDR
     try:
         df = fdr.DataReader(ticker, start.strftime('%Y-%m-%d'))
         if df is not None and len(df) > 50:
             return df
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.warning(f"[market_filter] FDR {ticker} fetch 실패: {e}")
+
     return None
 
 
