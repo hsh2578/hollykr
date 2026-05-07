@@ -87,7 +87,11 @@ class StrategyReport:
     max_drawdown: float = 0.0
     avg_hold_days: float = 0.0
     sharpe_ratio: float = 0.0
+    sortino_ratio: float = 0.0     # Phase A: 하방 변동성만 (trend-following 권장)
     calmar_ratio: float = 0.0
+    fitness_score: float = 0.0      # Phase D: WorldQuant 종합 (sqrt(|Ret|/Turnover) × Sharpe)
+    deflated_sharpe: float = 0.0    # Phase B: López de Prado Deflated SR (multiple testing 보정)
+    pbo: float = 0.0                # Phase B: Probability of Backtest Overfitting (0~1)
     best_trade: float = 0.0
     worst_trade: float = 0.0
     trades: List[Trade] = field(default_factory=list)
@@ -121,6 +125,136 @@ def bootstrap_pf_ci(pnls: List[float], n_bootstrap: int = 1000,
     lower = float(np.percentile(pf_samples, alpha * 100))
     upper = float(np.percentile(pf_samples, (1 - alpha) * 100))
     return lower, upper
+
+
+# ============================================================================
+# Phase B: López de Prado 방법론 (Deflated Sharpe + PBO)
+# ============================================================================
+
+def deflated_sharpe_ratio(sharpe: float, n_trials: int, skewness: float = 0.0,
+                           kurtosis: float = 3.0, n_obs: int = 100) -> float:
+    """Deflated Sharpe Ratio (López de Prado 2014).
+
+    Multiple testing 보정 + 비정규 분포 보정.
+    참고: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2460551
+
+    Args:
+        sharpe: 관측 Sharpe ratio
+        n_trials: 테스트한 전략 수 (multiple testing 보정용)
+        skewness: PnL 분포 왜도 (0=정규)
+        kurtosis: PnL 분포 첨도 (3=정규)
+        n_obs: 관측 수 (거래 수)
+
+    Returns:
+        DSR (0~1, 1 가까우면 진짜 알파). DSR < 0.95 → 통계적 의미 부족.
+    """
+    if n_obs < 5 or n_trials < 1:
+        return 0.0
+    from scipy.stats import norm
+
+    # Expected max Sharpe (under null hypothesis: SR=0)
+    # SR_max ≈ √(2 ln(N)) (다중 검정 시 우연으로 얻는 최대 Sharpe)
+    euler_mascheroni = 0.5772156649
+    n = max(n_trials, 1)
+    expected_max_sr = (
+        (1 - euler_mascheroni) * norm.ppf(1 - 1.0 / n)
+        + euler_mascheroni * norm.ppf(1 - 1.0 / (n * np.e))
+    )
+
+    # Standard error of Sharpe (비정규 분포 보정)
+    sr_std = np.sqrt(
+        (1 - skewness * sharpe + (kurtosis - 1) / 4 * sharpe ** 2) / (n_obs - 1)
+    )
+
+    # DSR (PSR with deflation)
+    if sr_std <= 0:
+        return 0.0
+    z = (sharpe - expected_max_sr) / sr_std
+    dsr = float(norm.cdf(z))
+    return max(0.0, min(1.0, dsr))
+
+
+def probability_backtest_overfitting(pnls_per_strategy: Dict[str, List[float]]) -> float:
+    """Probability of Backtest Overfitting (Bailey, López de Prado et al. 2014).
+
+    참고: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2326253
+
+    각 전략의 PnL을 N등분 → 모든 조합으로 Train/Test 분리 → 순위 일관성 측정
+    PBO = "Train에서 1등이 Test에서 하위 50%로 떨어지는 비율"
+
+    Args:
+        pnls_per_strategy: {strategy_name: [pnl1, pnl2, ...]}
+
+    Returns:
+        PBO (0~1). 0=과적합 X, 1=완전 과적합. 0.5 미만이 양호.
+    """
+    if len(pnls_per_strategy) < 2:
+        return 0.5  # 평가 불가 → 중립
+
+    from itertools import combinations
+
+    # 각 전략 PnL을 동일 길이로 padding (가장 짧은 전략 길이로)
+    min_len = min(len(p) for p in pnls_per_strategy.values())
+    if min_len < 16:
+        return 0.5  # 데이터 부족
+
+    # 16개 chunk로 분할
+    n_chunks = 16
+    chunk_size = min_len // n_chunks
+    if chunk_size < 1:
+        return 0.5
+
+    strategies = list(pnls_per_strategy.keys())
+    chunks = {}
+    for s in strategies:
+        chunks[s] = [
+            pnls_per_strategy[s][i * chunk_size:(i + 1) * chunk_size]
+            for i in range(n_chunks)
+        ]
+
+    # Combinatorial: chunks를 N/2 train, N/2 test로 모든 조합 분리
+    half = n_chunks // 2
+    overfit_count = 0
+    total_count = 0
+
+    for train_idx in combinations(range(n_chunks), half):
+        train_idx_set = set(train_idx)
+        test_idx = [i for i in range(n_chunks) if i not in train_idx_set]
+
+        # Train PnL (전략별)
+        train_pnls = {}
+        test_pnls = {}
+        for s in strategies:
+            train_pnls[s] = [v for i in train_idx for v in chunks[s][i]]
+            test_pnls[s] = [v for i in test_idx for v in chunks[s][i]]
+
+        # Train에서 가장 좋은 전략
+        train_pf = {}
+        for s in strategies:
+            wins = sum(p for p in train_pnls[s] if p > 0)
+            losses = abs(sum(p for p in train_pnls[s] if p <= 0)) or 0.001
+            train_pf[s] = wins / losses
+        best_train = max(train_pf, key=train_pf.get)
+
+        # Test에서 그 전략의 순위
+        test_pf = {}
+        for s in strategies:
+            wins = sum(p for p in test_pnls[s] if p > 0)
+            losses = abs(sum(p for p in test_pnls[s] if p <= 0)) or 0.001
+            test_pf[s] = wins / losses
+        sorted_test = sorted(test_pf, key=test_pf.get, reverse=True)
+        rank_in_test = sorted_test.index(best_train) + 1
+
+        # 하위 50%로 떨어지면 overfit
+        if rank_in_test > len(strategies) / 2:
+            overfit_count += 1
+        total_count += 1
+
+        # 1000개 조합으로 제한 (계산 비용)
+        if total_count >= 1000:
+            break
+
+    return overfit_count / total_count if total_count > 0 else 0.5
 
 
 # ============================================================================
@@ -433,7 +567,7 @@ def _calc_report(strategy, trades: List[Trade], period: str = '') -> StrategyRep
         # 진짜 알파: 95% CI 하한 > 1.0 (PF가 거의 확실히 1보다 큼)
         report.pf_significant = lo > 1.0
 
-    # MDD (누적 수익 기준)
+    # MDD (누적 수익 기준, %)
     cumulative = np.cumsum(pnls)
     peak = np.maximum.accumulate(cumulative)
     drawdown = cumulative - peak
@@ -445,11 +579,46 @@ def _calc_report(strategy, trades: List[Trade], period: str = '') -> StrategyRep
     else:
         report.sharpe_ratio = 0
 
+    # Sortino (하방 변동성만, trend-following 표준)
+    pnls_arr = np.array(pnls)
+    downside = pnls_arr[pnls_arr < 0]
+    if len(downside) > 1 and np.std(downside) > 0:
+        report.sortino_ratio = (np.mean(pnls) / np.std(downside)) * np.sqrt(252 / max(report.avg_hold_days, 1))
+    else:
+        report.sortino_ratio = 0
+
     # Calmar = 연간 수익률 / MDD
     if report.max_drawdown < 0:
         report.calmar_ratio = abs(report.total_return / report.max_drawdown)
     else:
         report.calmar_ratio = 999
+
+    # WorldQuant Fitness (Phase D)
+    turnover_proxy = len(pnls) / max(report.avg_hold_days * 252 / 365, 1)
+    fitness_returns = abs(report.total_return)
+    if fitness_returns > 0:
+        report.fitness_score = float(
+            np.sqrt(fitness_returns / max(turnover_proxy, 0.125)) * abs(report.sharpe_ratio)
+        )
+    else:
+        report.fitness_score = 0
+
+    # Deflated Sharpe Ratio (Phase B, López de Prado)
+    # 우리는 37개 전략 테스트 = N_trials = 37
+    if len(pnls) >= 5 and report.sharpe_ratio > 0:
+        try:
+            from scipy.stats import skew, kurtosis as ks
+            pnl_skew = float(skew(pnls)) if len(pnls) > 3 else 0.0
+            pnl_kurt = float(ks(pnls, fisher=False)) if len(pnls) > 3 else 3.0
+            report.deflated_sharpe = deflated_sharpe_ratio(
+                sharpe=report.sharpe_ratio,
+                n_trials=37,  # HollyKR 전략 수
+                skewness=pnl_skew,
+                kurtosis=pnl_kurt,
+                n_obs=len(pnls),
+            )
+        except Exception:
+            report.deflated_sharpe = 0.0
 
     return report
 
@@ -571,20 +740,25 @@ def _print_summary_split(reports: List[StrategyReport]):
         # Train 판정 (느슨)
         train_pass = (tr and tr.total_trades >= 10
                       and tr.win_rate >= 0.4 and tr.profit_factor >= 1.2)
-        # Test 판정 (강화: 거래 30+ AND PF 1.2+ AND 승률 40%+)
+        # Test 판정 (Phase A 강화: PF + Sharpe + MDD 동시)
         test_pass = (te and te.total_trades >= 30
-                     and te.win_rate >= 0.4 and te.profit_factor >= 1.2)
-        # 진짜 알파 판정 (가장 엄격: Test PF lower CI > 1.0)
-        test_significant = (te and te.total_trades >= 30
-                           and te.pf_significant
-                           and te.win_rate >= 0.4)
+                     and te.win_rate >= 0.4
+                     and te.profit_factor >= 1.2
+                     and te.sharpe_ratio >= 1.0       # 신규: Sharpe ≥ 1.0
+                     and te.max_drawdown > -0.50)     # 신규: MDD > -50% (cumsum)
+        # ALPHA 판정 (Phase A 강화: + Sharpe ≥ 1.5)
+        test_alpha = (te and te.total_trades >= 30
+                      and te.pf_significant
+                      and te.win_rate >= 0.4
+                      and te.sharpe_ratio >= 1.5      # 신규: Sharpe 1.5+
+                      and te.max_drawdown > -0.50)
 
-        if test_significant:
-            verdict = 'ALPHA'  # 통계적 의미 있는 진짜 알파
+        if test_alpha:
+            verdict = 'ALPHA'
             pass_count += 1
             significant_count += 1
         elif test_pass:
-            verdict = 'PASS'  # 점추정 PASS이지만 통계적 의미 X
+            verdict = 'PASS'
             pass_count += 1
         elif train_pass and not test_pass:
             verdict = 'OVERFIT'
@@ -598,31 +772,39 @@ def _print_summary_split(reports: List[StrategyReport]):
             '등급': tr.grade if tr else (te.grade if te else ''),
         }
 
-        # Train 열
+        # Train 열 (요약)
         if tr and tr.total_trades > 0:
-            row['Train거래'] = tr.total_trades
-            row['Train승률'] = f'{tr.win_rate:.1%}'
-            row['TrainPF'] = f'{tr.profit_factor:.2f}'
-            row['Train수익'] = f'{tr.total_return:+.1%}'
+            row['Tr거래'] = tr.total_trades
+            row['TrPF'] = f'{tr.profit_factor:.2f}'
+            row['TrSharpe'] = f'{tr.sharpe_ratio:.1f}'
         else:
-            row['Train거래'] = 0
-            row['Train승률'] = '-'
-            row['TrainPF'] = '-'
-            row['Train수익'] = '-'
+            row['Tr거래'] = 0
+            row['TrPF'] = '-'
+            row['TrSharpe'] = '-'
 
-        # Test 열 (PF + 95% CI)
+        # Test 열 (Phase A: PF + Sharpe + Sortino + MDD + Calmar)
         if te and te.total_trades > 0:
-            row['Test거래'] = te.total_trades
-            row['Test승률'] = f'{te.win_rate:.1%}'
-            row['TestPF'] = f'{te.profit_factor:.2f}'
+            row['Te거래'] = te.total_trades
+            row['Te승률'] = f'{te.win_rate:.1%}'
+            row['TePF'] = f'{te.profit_factor:.2f}'
             row['PF_CI'] = f'[{te.pf_ci_lower:.2f},{te.pf_ci_upper:.2f}]'
-            row['Test수익'] = f'{te.total_return:+.1%}'
+            row['Sharpe'] = f'{te.sharpe_ratio:.2f}'
+            row['Sortino'] = f'{te.sortino_ratio:.2f}'
+            row['MDD'] = f'{te.max_drawdown:.1%}'
+            row['Calmar'] = f'{te.calmar_ratio:.2f}'
+            row['Fitness'] = f'{te.fitness_score:.1f}'
+            row['Te수익'] = f'{te.total_return:+.0%}'
         else:
-            row['Test거래'] = 0
-            row['Test승률'] = '-'
-            row['TestPF'] = '-'
+            row['Te거래'] = 0
+            row['Te승률'] = '-'
+            row['TePF'] = '-'
             row['PF_CI'] = '-'
-            row['Test수익'] = '-'
+            row['Sharpe'] = '-'
+            row['Sortino'] = '-'
+            row['MDD'] = '-'
+            row['Calmar'] = '-'
+            row['Fitness'] = '-'
+            row['Te수익'] = '-'
 
         rows.append(row)
 
@@ -689,8 +871,14 @@ def save_csv(reports: List[StrategyReport], trades_all: List[Trade]):
             'category': r.category, 'trades': r.total_trades,
             'wins': r.wins, 'losses': r.losses, 'win_rate': round(r.win_rate, 4),
             'avg_return': round(r.avg_return, 4), 'total_return': round(r.total_return, 4),
-            'profit_factor': round(r.profit_factor, 2), 'mdd': round(r.max_drawdown, 4),
-            'sharpe': round(r.sharpe_ratio, 2), 'avg_hold_days': round(r.avg_hold_days, 1),
+            'profit_factor': round(r.profit_factor, 2),
+            'pf_ci_lower': round(r.pf_ci_lower, 2), 'pf_ci_upper': round(r.pf_ci_upper, 2),
+            'mdd': round(r.max_drawdown, 4),
+            'sharpe': round(r.sharpe_ratio, 2),
+            'sortino': round(r.sortino_ratio, 2),
+            'calmar': round(r.calmar_ratio, 2),
+            'fitness': round(r.fitness_score, 2),
+            'avg_hold_days': round(r.avg_hold_days, 1),
         })
     summary_path = OUTPUT_DIR / f'backtest_summary_{today}.csv'
     pd.DataFrame(summary_rows).to_csv(summary_path, index=False, encoding='utf-8-sig')
@@ -796,9 +984,13 @@ def run_walk_forward(num_windows: int = 4, window_offset_days: int = 60,
     for name, w_reports in window_results.items():
         if not w_reports:
             continue
-        # 윈도우별 PASS 횟수 (PF >= 1.2 + 승률 >= 40% + 거래 >= 5)
+        # 윈도우별 PASS 횟수 (Phase A 강화: PF + Sharpe + MDD)
         wins = sum(1 for r in w_reports
-                   if r.total_trades >= 5 and r.profit_factor >= 1.2 and r.win_rate >= 0.4)
+                   if r.total_trades >= 5
+                   and r.profit_factor >= 1.2
+                   and r.win_rate >= 0.4
+                   and r.sharpe_ratio >= 1.0
+                   and r.max_drawdown > -0.50)
         # 누적 trades로 통계 의미 평가
         all_trades = aggregated_test_trades.get(name, [])
         if not all_trades:
@@ -811,11 +1003,25 @@ def run_walk_forward(num_windows: int = 4, window_offset_days: int = 60,
                   if any(p <= 0 for p in all_pnls) else 999.0)
         agg_lo, agg_hi = bootstrap_pf_ci(all_pnls, n_bootstrap=1000) if total >= 5 else (0, 0)
 
-        if total >= 30 and agg_lo > 1.0 and wins >= 3:
+        # 누적 Sharpe / MDD / Sortino
+        pnls_arr = np.array(all_pnls)
+        avg_hold = np.mean([t.hold_days for t in all_trades]) if all_trades else 1
+        agg_sharpe = (np.mean(pnls_arr) / np.std(pnls_arr)) * np.sqrt(252 / max(avg_hold, 1)) if len(pnls_arr) > 1 and np.std(pnls_arr) > 0 else 0
+        downside = pnls_arr[pnls_arr < 0]
+        agg_sortino = (np.mean(pnls_arr) / np.std(downside)) * np.sqrt(252 / max(avg_hold, 1)) if len(downside) > 1 and np.std(downside) > 0 else 0
+        cumulative = np.cumsum(all_pnls)
+        peak = np.maximum.accumulate(cumulative)
+        agg_mdd = float(np.min(cumulative - peak)) if len(cumulative) > 0 else 0
+        agg_total_ret = sum(all_pnls)
+        agg_calmar = abs(agg_total_ret / agg_mdd) if agg_mdd < 0 else 999
+
+        # ALPHA 판정 (Phase A 강화: + Sharpe ≥ 1.5 + MDD > -50%)
+        if (total >= 30 and agg_lo > 1.0 and wins >= 3
+                and agg_sharpe >= 1.5 and agg_mdd > -0.50):
             verdict = 'ALPHA'
             alpha_count += 1
             consistent_count += 1
-        elif wins >= 3 and total >= 20:
+        elif wins >= 3 and total >= 20 and agg_sharpe >= 1.0:
             verdict = 'CONSISTENT'
             consistent_count += 1
         elif total >= 20 and agg_pf >= 1.2:
@@ -826,18 +1032,36 @@ def run_walk_forward(num_windows: int = 4, window_offset_days: int = 60,
         summary_rows.append({
             '판정': verdict,
             '전략': name[:22],
-            '윈도우_PASS': f'{wins}/{num_windows}',
-            '누적거래': total,
-            '누적승률': f'{agg_wr:.1%}',
-            '누적PF': f'{agg_pf:.2f}',
+            '윈도우': f'{wins}/{num_windows}',
+            '거래': total,
+            '승률': f'{agg_wr:.1%}',
+            'PF': f'{agg_pf:.2f}',
             'PF_CI95': f'[{agg_lo:.2f},{agg_hi:.2f}]',
+            'Sharpe': f'{agg_sharpe:.2f}',
+            'Sortino': f'{agg_sortino:.2f}',
+            'MDD': f'{agg_mdd:.0%}',
+            'Calmar': f'{agg_calmar:.2f}',
+            '수익': f'{agg_total_ret:+.0%}',
         })
 
     summary_rows.sort(key=lambda r: {'ALPHA': 0, 'CONSISTENT': 1, 'BORDERLINE': 2, 'FAIL': 3}[r['판정']])
 
     print(tabulate(summary_rows, headers='keys', tablefmt='simple', stralign='left'))
-    print(f"\n진짜 알파 (4중 3+ PASS + PF 95% CI 하한 > 1.0): {alpha_count}개")
-    print(f"일관성 있는 PASS (4중 3+): {consistent_count}개")
+    print(f"\n진짜 알파 (Sharpe 1.5+ AND PF CI 하한 > 1.0 AND 4중 3+ AND MDD > -50%): {alpha_count}개")
+    print(f"일관성 있는 PASS (Sharpe 1.0+ AND 4중 3+): {consistent_count}개")
+
+    # Phase B: Probability of Backtest Overfitting (López de Prado)
+    pnls_per_strategy = {
+        name: [t.pnl_pct for t in trades]
+        for name, trades in aggregated_test_trades.items()
+        if len(trades) >= 16
+    }
+    if len(pnls_per_strategy) >= 2:
+        pbo = probability_backtest_overfitting(pnls_per_strategy)
+        pbo_status = "양호" if pbo < 0.5 else "과적합 의심"
+        print(f"\n📊 Probability of Backtest Overfitting (PBO): {pbo:.0%} [{pbo_status}]")
+        print(f"   (López de Prado 2014. <50% 양호, ≥50% 과적합 의심)")
+
     print(f"\n총 소요 시간: {elapsed:.1f}초")
 
     if save:
@@ -922,13 +1146,16 @@ def run_backtest(test_days: int = 120, strategy_filter: str = None,
         print(f"\n  [{i}/{len(all_strategies)}] {strategy.name} ({strategy.grade}, {strategy.exec_timing})")
 
         if split:
+            # Phase B: Train/Test 사이 5일 embargo (López de Prado purging)
+            # 추세 추종 전략은 평균 보유 5-10일이라 train의 끝과 test 시작이 겹치면 leakage
+            embargo_days = 5
             # --- Train 기간: 처음 70% (과거 쪽) ---
-            # day_offset 범위: test_days ~ test_days_oos+1 (오래된 과거 → 중간)
+            # Train 끝나는 시점이 test_days_oos + embargo (test 시작 5일 전)
             train_trades = _simulate_strategy(
                 strategy, ohlcv_dict, universe,
                 test_days=test_days,
                 start_offset=0,
-                end_offset=test_days_oos,
+                end_offset=test_days_oos + embargo_days,  # embargo로 train 끝 5일 빼기
                 entry_mode=entry_mode,
             )
             train_report = _calc_report(strategy, train_trades, period='Train')
