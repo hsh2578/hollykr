@@ -237,42 +237,44 @@ def main():
         except Exception:
             pass
 
-        # Phase 6: Kill Switch — 시그널 송출 동결 + 경고
+        # Phase 6+: Kill Switch 발동 시 경고 메시지 먼저 송출 (시그널은 별도로 계속 송출)
         if kill_switch_active:
             today = datetime.now().strftime('%Y-%m-%d')
             warn_msg = (
-                f"⚠️ HollyKR Kill Switch 발동 ({today})\n"
+                f"[!] HollyKR Kill Switch 발동 ({today})\n"
                 f"시장 레짐: {market_regime}\n"
                 f"---\n"
                 f"발동 사유:\n"
                 + "\n".join(f"  - {r}" for r in kill_reasons) + "\n"
                 f"---\n"
-                f"오늘 매수 시그널 송출 중단. 보유 포지션 손절 점검 권장.\n"
-                f"규정상 강한 하락 추세에서 매수는 통계적으로 손해입니다."
+                f"※ 아래 시그널은 *참고용*입니다. 매수 비권장.\n"
+                f"   강한 하락/패닉 추세에서 매수는 통계적으로 손해입니다.\n"
+                f"   보유 포지션 손절 점검 권장."
             )
-            print("\n[Kill Switch ACTIVE]")
+            print("\n[Kill Switch ACTIVE — 경고 + 시그널 참고용 송출]")
             for r in kill_reasons:
                 print(f"  - {r}")
             asyncio.run(send_message(warn_msg))
-            # 시그널 송출 안 함 — return 직전 cleanup만 수행
 
         total_strats = len(PROVEN_STRATEGIES) if args.proven else 32
         active_strats = len(set(s.strategy_name for s in signals))
 
-        # Kill Switch 활성 시 시그널 송출 스킵
-        if kill_switch_active:
-            pass  # 위에서 이미 경고 메시지 송출
-        elif signals:
+        # 시그널 송출 (Kill Switch 활성 여부 무관, 항상 보냄)
+        if signals:
+            # Kill Switch 활성 시 레짐에 [참고용] 태그 추가
+            display_regime = (
+                f"{market_regime} [참고용 / 매수 비권장]"
+                if kill_switch_active else market_regime
+            )
             print("\n텔레그램 알림 전송 중...")
             send_holly_signals_sync(
-                signals, market_regime=market_regime,
+                signals, market_regime=display_regime,
                 active_strategies=active_strats,
                 total_strategies=total_strats,
                 strong_strategies=list(dynamic_strong),
                 watch_strategies=list(dynamic_watch),
             )
         else:
-            from scripts.telegram_alert import send_message
             today = datetime.now().strftime('%Y-%m-%d')
             no_signal_msg = (
                 f"HollyKR ({today})\n"
