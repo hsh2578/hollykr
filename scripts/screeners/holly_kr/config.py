@@ -10,7 +10,7 @@ MIN_MARKET_CAP = 1000             # 시가총액 1,000억 이상
 MIN_TRADING_VALUE = 0             # 거래대금 필터 없음 (전략이 처리)
 MIN_PRICE = 0                     # 주가 필터 없음 (전략이 처리)
 MAX_SUSPENSION_DAYS = 5           # 거래정지 허용 일수
-LOOKBACK_DAYS = 500               # OHLCV 조회 기간 (252일 백테스트 + 200일 이평 커버)
+LOOKBACK_DAYS = 1500              # OHLCV 5년 (분기 5년 백테스트 + 듀얼 60일/180일 평가 커버)
 
 # 테마주 필터 — 전략 레벨에서 처리, 유니버스에선 제외 안 함
 THEME_TV_MCAP_RATIO = 0.05       # 거래대금/시총 > 5% → 테마 의심
