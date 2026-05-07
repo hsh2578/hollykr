@@ -25,9 +25,11 @@ import argparse
 import sys
 import time
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
@@ -46,13 +48,16 @@ from scripts.screeners.holly_kr.backtest import (
 from scripts.screeners.holly_kr.alpha_pool import save_alpha_pool, classify_strategy
 
 # ============================================================================
-# 상수
+# 상수 (Phase F 최적화: 4년 × 500종목 × 12 윈도우)
+# 한국 시장 시장 구조 변화 고려 → 5년 대신 4년 (1000일)
+# Sample 500 = 시총 상위 33% (거래대금 88% 커버)
 # ============================================================================
-HOLDOUT_DAYS = 252       # 1년 hold-out
-LEARN_DAYS = 1248        # 4년 학습 (총 1500 - 252)
+HOLDOUT_DAYS = 252       # 1년 hold-out (절대 학습 X)
+LEARN_DAYS = 750         # 3년 학습 (총 1000 - 252)
 NUM_WINDOWS = 12         # 12 윈도우 워크포워드
-WINDOW_OFFSET = 100      # 100일 슬라이딩
+WINDOW_OFFSET = 60       # 60일 슬라이딩 (4년 fit)
 TEST_DAYS = 200          # 각 윈도우 200일 (Train 140 + Test 60)
+DEFAULT_SAMPLE = 500     # 백테스트 표본 (200 → 500)
 
 # 그리드 서치 옵션 (전략 카테고리별)
 PARAMETER_GRID = {
@@ -315,29 +320,202 @@ def holdout_validate(strategy, holdout_ohlcv: Dict, universe: pd.DataFrame,
 
 
 # ============================================================================
+# ProcessPool Worker (전략 단위 병렬)
+# ============================================================================
+
+def _evaluate_strategy_worker(args: tuple) -> Optional[Dict]:
+    """단일 전략 평가 — ProcessPool에서 호출.
+
+    각 워커가 자체 OHLCV 캐시 로드 + 평가 → 메인에 결과 반환.
+    pickle 비용 최소화를 위해 args에 OHLCV 직접 안 보냄.
+    """
+    strategy_name, sample_size, parameter_grid = args
+
+    # 워커 프로세스 내부 import
+    from scripts.screeners.holly_kr.scanner import ALL_STRATEGIES
+    from scripts.screeners.holly_kr.universe import get_universe
+    from scripts.screeners.holly_kr.backtest import _load_universe_ohlcv
+
+    # 전략 객체
+    strategy = next((s for s in ALL_STRATEGIES if s.name == strategy_name), None)
+    if strategy is None:
+        return None
+
+    # 유니버스 + OHLCV 로드 (워커마다 fresh)
+    universe = get_universe()
+    if sample_size > 0 and sample_size < len(universe):
+        universe = universe.nlargest(sample_size, 'MarketCap').reset_index(drop=True)
+
+    full_ohlcv = _load_universe_ohlcv(universe, days=LOOKBACK_DAYS, end_date=None)
+    learn_data, holdout_data = split_data_holdout(full_ohlcv, holdout_days=HOLDOUT_DAYS)
+
+    if len(learn_data) < 50:
+        return None
+
+    # 그리드 옵션
+    grid = parameter_grid.get(strategy.category)
+    if not grid:
+        grid = {'target_mults': [4, 5], 'stop_mults': [1.5, 2.0]}
+
+    # Walk-forward optimization
+    wf_result = walk_forward_optimize(
+        strategy, learn_data, universe,
+        target_mults=grid['target_mults'],
+        stop_mults=grid['stop_mults'],
+    )
+
+    if wf_result['num_windows'] < 4:
+        return {
+            'name': strategy_name,
+            'category': strategy.category,
+            'tier': 'SKIP',
+            'reason': f"학습 윈도우 부족 ({wf_result['num_windows']}/12)",
+        }
+
+    # Surface analysis
+    surface = analyze_parameter_surface(wf_result['window_results'])
+
+    # 학습 통과 기준
+    windows_with_pf_above_15 = sum(
+        1 for w in wf_result['window_results']
+        if w['best_pf'] >= 1.5
+    )
+
+    if windows_with_pf_above_15 < ALPHA_CRITERIA['learn_min_windows_passed']:
+        return {
+            'name': strategy_name,
+            'category': strategy.category,
+            'tier': 'FAIL_LEARN',
+            'reason': f"윈도우 PASS 부족: {windows_with_pf_above_15}",
+            'windows_passed': windows_with_pf_above_15,
+            'num_windows': wf_result['num_windows'],
+            'optimal_target_mult': surface['optimal_target'],
+            'optimal_stop_mult': surface['optimal_stop'],
+            'surface_stability': surface['surface_stability'],
+        }
+
+    if surface['surface_stability'] < ALPHA_CRITERIA['surface_min_stability']:
+        return {
+            'name': strategy_name,
+            'category': strategy.category,
+            'tier': 'OVERFIT',
+            'reason': f"Surface 불안정 ({surface['surface_stability']:.0%})",
+            'surface_stability': surface['surface_stability'],
+        }
+
+    # Hold-out 최종 검증
+    holdout = holdout_validate(
+        strategy, holdout_data, universe,
+        best_target=surface['optimal_target'],
+        best_stop=surface['optimal_stop'],
+    )
+
+    avg_window_pf = float(np.mean([w['best_pf'] for w in wf_result['window_results']]))
+    avg_window_sharpe = float(np.mean([w['best_sharpe'] for w in wf_result['window_results']]))
+
+    report = {
+        'name': strategy_name,
+        'category': strategy.category,
+        'tier': 'ALPHA' if holdout['pass'] else 'OVERFIT',
+        'windows_passed': windows_with_pf_above_15,
+        'num_windows': wf_result['num_windows'],
+        'optimal_target_mult': surface['optimal_target'],
+        'optimal_stop_mult': surface['optimal_stop'],
+        'surface_stability': surface['surface_stability'],
+        'parameter_drift': surface['parameter_drift'],
+        'learn_avg_pf': round(avg_window_pf, 2),
+        'learn_avg_sharpe': round(avg_window_sharpe, 2),
+        'holdout_trades': holdout['trades'],
+        'holdout_pf': round(holdout['pf'], 2),
+        'holdout_pf_ci_lower': round(holdout.get('pf_ci_lower', 0), 2),
+        'holdout_sharpe': round(holdout['sharpe'], 2),
+        'holdout_sortino': round(holdout.get('sortino', 0), 2),
+        'holdout_mdd': round(holdout['mdd'], 3),
+        'holdout_calmar': round(holdout.get('calmar', 0), 2),
+        'holdout_fitness': round(holdout.get('fitness', 0), 2),
+        'holdout_total_return': round(holdout.get('total_return', 0), 3),
+    }
+
+    if holdout['pass']:
+        if holdout['sharpe'] >= 1.5 and holdout.get('pf_ci_lower', 0) > 1.0:
+            report['tier'] = 'ALPHA'
+        else:
+            report['tier'] = 'CONSISTENT'
+
+    return report
+
+
+# ============================================================================
 # 통합 5년 백테스트 (메인 진입점)
 # ============================================================================
 
-def run_5y_backtest(sample_size: int = 200, save: bool = True) -> List[Dict]:
-    """5년 종합 백테스트 + ALPHA 풀 식별.
+def run_5y_backtest(sample_size: int = 200, save: bool = True,
+                     workers: int = None, parallel: bool = True) -> List[Dict]:
+    """5년 종합 백테스트 + ALPHA 풀 식별 (병렬 처리).
 
-    1. OHLCV 1500일 로드
+    Args:
+        sample_size: 유니버스 샘플 크기
+        save: alpha_pool.json 저장
+        workers: ProcessPool worker 수 (None = os.cpu_count())
+        parallel: True면 ProcessPool 병렬, False면 순차
+
+    1. OHLCV 1500일 로드 (메인 + 각 워커)
     2. 학습 (4년) + Hold-out (1년) 분리
-    3. 각 전략에 대해:
-       a. 학습 데이터로 walk-forward optimization (12 윈도우 × 그리드)
-       b. Surface analysis (파라미터 안정성)
-       c. 학습 통과 시 Hold-out 검증
+    3. ★병렬★ 각 전략을 별도 프로세스에서 평가
     4. 결과를 alpha_pool.json에 저장
     """
     overall_start = time.time()
+
+    if workers is None:
+        workers = max(1, (os.cpu_count() or 4) - 1)  # 1 코어는 시스템용
+
     print("=" * 80)
-    print(f"  5년 종합 백테스트 (Phase F-2)")
+    print(f"  4년 종합 백테스트 (Phase F-2 병렬 실행)")
     print(f"  Hold-out: 마지막 {HOLDOUT_DAYS}일 (1년)")
     print(f"  학습: {LEARN_DAYS}일 ({NUM_WINDOWS} 윈도우 × {WINDOW_OFFSET}일 슬라이딩)")
     print(f"  그리드 서치: 카테고리별 (target_mult × stop_mult)")
+    print(f"  병렬: {'ProcessPool ' + str(workers) + ' workers' if parallel else 'OFF (순차)'}")
     print("=" * 80)
 
-    # 1. OHLCV 로드
+    strategies_to_test = list(ALL_STRATEGIES)
+    alpha_results = []
+
+    if parallel:
+        # 병렬 처리: 각 워커가 자체 OHLCV 로드 + 평가
+        print(f"\n[병렬 평가] {len(strategies_to_test)}개 전략 × {workers} workers")
+        print(f"  (각 워커가 OHLCV 캐시 fresh 로드 — 메모리 격리)")
+
+        args_list = [
+            (strategy.name, sample_size, PARAMETER_GRID)
+            for strategy in strategies_to_test
+        ]
+
+        completed = 0
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            futures = {
+                executor.submit(_evaluate_strategy_worker, args): args[0]
+                for args in args_list
+            }
+            for future in as_completed(futures):
+                completed += 1
+                strategy_name = futures[future]
+                try:
+                    result = future.result()
+                    if result:
+                        if result.get('tier') in ('ALPHA', 'CONSISTENT', 'OVERFIT'):
+                            alpha_results.append(result)
+                        elapsed = time.time() - overall_start
+                        print(f"  [{completed}/{len(strategies_to_test)}] "
+                              f"{strategy_name:<25s} → {result.get('tier', 'UNKNOWN')} "
+                              f"({elapsed:.0f}s elapsed)")
+                except Exception as e:
+                    print(f"  [{completed}/{len(strategies_to_test)}] "
+                          f"{strategy_name:<25s} ERROR: {e}")
+
+        # 4. 결과 저장 (병렬 모드 종료)
+        return _finalize_results(alpha_results, save, overall_start)
+
+    # ============== 순차 모드 (fallback) ==============
     universe = get_universe()
     if sample_size > 0 and sample_size < len(universe):
         universe = universe.nlargest(sample_size, 'MarketCap').reset_index(drop=True)
@@ -347,28 +525,20 @@ def run_5y_backtest(sample_size: int = 200, save: bool = True) -> List[Dict]:
     print(f"  로드 완료: {len(full_ohlcv)}개")
     flush_cache()
 
-    # 2. Train + Holdout 분리
     print(f"\n[2/4] 학습 / Hold-out 분리...")
     learn_data, holdout_data = split_data_holdout(full_ohlcv, holdout_days=HOLDOUT_DAYS)
     print(f"  학습 데이터: {len(learn_data)}개 종목")
     print(f"  Hold-out 데이터: {len(holdout_data)}개 종목")
-
-    # 3. 각 전략 평가
-    strategies_to_test = list(ALL_STRATEGIES)
-    alpha_results = []
 
     print(f"\n[3/4] 전략별 종합 평가 ({len(strategies_to_test)}개 전략)...")
     for i, strategy in enumerate(strategies_to_test, 1):
         print(f"\n  [{i}/{len(strategies_to_test)}] {strategy.name} ({strategy.category})")
         strat_start = time.time()
 
-        # 그리드 옵션
         grid = PARAMETER_GRID.get(strategy.category)
         if not grid:
-            # legendary 등은 카테고리 매칭 안 되면 default
             grid = {'target_mults': [4, 5], 'stop_mults': [1.5, 2.0]}
 
-        # Walk-forward optimization
         wf_result = walk_forward_optimize(
             strategy, learn_data, universe,
             target_mults=grid['target_mults'],
@@ -446,46 +616,46 @@ def run_5y_backtest(sample_size: int = 200, save: bool = True) -> List[Dict]:
         print(f"      [{report['tier']}] 학습 PF {avg_window_pf:.2f} | "
               f"Hold-out PF {holdout['pf']:.2f} ({time.time()-strat_start:.0f}초)")
 
-    # 4. 결과 저장
-    print(f"\n[4/4] 결과 저장 + 출력...")
+    # 4. 결과 저장 (순차 모드)
+    return _finalize_results(alpha_results, save, overall_start)
 
-    # PBO 계산 (홀드아웃 거래로)
-    pnls_per_strategy = {}
-    # 간소화: holdout 통계만 사용 (나중에 trade-level로 강화 가능)
 
-    # 종합 출력
+def _finalize_results(alpha_results: List[Dict], save: bool, overall_start: float) -> List[Dict]:
+    """결과 정렬 + 출력 + 저장 (병렬/순차 공통)."""
     print(f"\n{'='*100}")
-    print(f"  5년 종합 백테스트 최종 결과")
+    print(f"  4년 종합 백테스트 최종 결과")
     print(f"{'='*100}")
 
     if alpha_results:
-        sorted_results = sorted(alpha_results, key=lambda r: -r['holdout_pf'])
+        sorted_results = sorted(alpha_results, key=lambda r: -r.get('holdout_pf', 0))
         rows = []
         for r in sorted_results:
             rows.append({
-                '판정': r['tier'],
+                '판정': r.get('tier', '-'),
                 '전략': r['name'][:22],
-                '학습 윈도우': f"{r['windows_passed']}/{r['num_windows']}",
-                'Surface': f"{r['surface_stability']:.0%}",
-                'Drift': '!' if r['parameter_drift'] else 'OK',
-                '최적 (T,S)': f"({r['optimal_target_mult']},{r['optimal_stop_mult']})",
-                '학습 PF': f"{r['learn_avg_pf']:.2f}",
-                'Hold PF': f"{r['holdout_pf']:.2f}",
-                'Hold Sharpe': f"{r['holdout_sharpe']:.2f}",
-                'Hold MDD': f"{r['holdout_mdd']:.0%}",
-                'Hold 수익': f"{r['holdout_total_return']*100:+.0f}%",
+                '학습': f"{r.get('windows_passed', 0)}/{r.get('num_windows', 0)}",
+                'Surface': f"{r.get('surface_stability', 0):.0%}",
+                'Drift': '!' if r.get('parameter_drift') else 'OK',
+                '최적': f"({r.get('optimal_target_mult', '-')},{r.get('optimal_stop_mult', '-')})",
+                '학습PF': f"{r.get('learn_avg_pf', 0):.2f}",
+                'HoldPF': f"{r.get('holdout_pf', 0):.2f}",
+                'Sharpe': f"{r.get('holdout_sharpe', 0):.2f}",
+                'MDD': f"{r.get('holdout_mdd', 0):.0%}",
+                '수익': f"{r.get('holdout_total_return', 0)*100:+.0f}%",
             })
         print(tabulate(rows, headers='keys', tablefmt='simple', stralign='left'))
 
-        alpha_count = sum(1 for r in alpha_results if r['tier'] == 'ALPHA')
-        consistent_count = sum(1 for r in alpha_results if r['tier'] == 'CONSISTENT')
+        alpha_count = sum(1 for r in alpha_results if r.get('tier') == 'ALPHA')
+        consistent_count = sum(1 for r in alpha_results if r.get('tier') == 'CONSISTENT')
         print(f"\n  ALPHA (Hold-out 통과 + Sharpe 1.5+): {alpha_count}개")
         print(f"  CONSISTENT (Hold-out 통과): {consistent_count}개")
 
-    # alpha_pool.json 저장
+    # alpha_pool.json 저장 (ALPHA + CONSISTENT만)
     if save and alpha_results:
-        save_alpha_pool(alpha_results, pbo=0.0,
-                        lookback_days=LOOKBACK_DAYS, num_windows=NUM_WINDOWS)
+        eligible = [r for r in alpha_results if r.get('tier') in ('ALPHA', 'CONSISTENT')]
+        if eligible:
+            save_alpha_pool(eligible, pbo=0.0,
+                            lookback_days=LOOKBACK_DAYS, num_windows=NUM_WINDOWS)
 
     elapsed = time.time() - overall_start
     print(f"\n총 소요 시간: {elapsed/60:.1f}분")
@@ -494,9 +664,18 @@ def run_5y_backtest(sample_size: int = 200, save: bool = True) -> List[Dict]:
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='HollyKR 5년 종합 백테스트')
-    parser.add_argument('--sample', type=int, default=200, help='유니버스 샘플 크기')
+    parser = argparse.ArgumentParser(description='HollyKR 4년 종합 백테스트 (분기 1회)')
+    parser.add_argument('--sample', type=int, default=DEFAULT_SAMPLE, help='유니버스 샘플 크기 (기본 500)')
     parser.add_argument('--no-save', action='store_true', help='alpha_pool.json 저장 안 함')
+    parser.add_argument('--workers', type=int, default=None,
+                        help='ProcessPool worker 수 (기본 cpu_count-1)')
+    parser.add_argument('--no-parallel', action='store_true',
+                        help='순차 실행 (디버깅용)')
     args = parser.parse_args()
 
-    run_5y_backtest(sample_size=args.sample, save=not args.no_save)
+    run_5y_backtest(
+        sample_size=args.sample,
+        save=not args.no_save,
+        workers=args.workers,
+        parallel=not args.no_parallel,
+    )
