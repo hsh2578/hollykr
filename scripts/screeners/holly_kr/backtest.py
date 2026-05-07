@@ -839,7 +839,7 @@ def _print_summary_split(reports: List[StrategyReport]):
     # Phase 9: Survivorship bias 정직성 경고
     # ============================================================
     print("\n" + "=" * 90)
-    print("  ⚠️  SURVIVORSHIP BIAS 경고 (Phase 9 — 정직성 보정)")
+    print("  [!] SURVIVORSHIP BIAS 경고 (Phase 9 - 정직성 보정)")
     print("=" * 90)
     print("  현재 유니버스: '오늘 시점' 시총 1,000억+ 종목 (살아남은 종목 풀)")
     print("  실제 영향:")
@@ -1068,8 +1068,8 @@ def run_walk_forward(num_windows: int = 4, window_offset_days: int = 60,
     if len(pnls_per_strategy) >= 2:
         pbo = probability_backtest_overfitting(pnls_per_strategy)
         pbo_status = "양호" if pbo < 0.5 else "과적합 의심"
-        print(f"\n📊 Probability of Backtest Overfitting (PBO): {pbo:.0%} [{pbo_status}]")
-        print(f"   (López de Prado 2014. <50% 양호, ≥50% 과적합 의심)")
+        print(f"\n[PBO] Probability of Backtest Overfitting: {pbo:.0%} [{pbo_status}]")
+        print(f"      (Lopez de Prado 2014. <50% 양호, >=50% 과적합 의심)")
 
     print(f"\n총 소요 시간: {elapsed:.1f}초")
 
