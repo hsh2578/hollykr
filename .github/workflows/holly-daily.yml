@@ -2,10 +2,10 @@ name: HollyKR Daily Scan
 
 on:
   schedule:
-    # GitHub Actions cron은 피크타임에 1-2시간 지연됨.
-    # 14:20 KST 실제 실행을 목표로 2시간 당긴 스케줄 (UTC 03:20 = KST 12:20).
-    # 지연 2시간 적용 시 14:20 KST 근처 실행 예상.
-    - cron: '20 3 * * 1-5'
+    # GitHub Actions cron은 피크타임에 1-3시간 지연됨.
+    # 15:00~15:30 KST 도착 목표 (동시호가 시간 직전).
+    # UTC 03:30 = KST 12:30 스케줄. 평균 2-3시간 지연 → 14:30~16:00 실행 → 도착 15:00~16:00.
+    - cron: '30 3 * * 1-5'
   workflow_dispatch:
 
 jobs:

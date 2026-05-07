@@ -55,6 +55,8 @@ class NeoBreakout(BaseStrategy):
             hold_min=1, hold_max=3, confidence=0.52,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
         )
+        if sig is None:
+            return None
         sig.risk_warnings = warnings
         return sig
 

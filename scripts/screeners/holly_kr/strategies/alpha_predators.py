@@ -50,6 +50,8 @@ class AlphaPredators(BaseStrategy):
             hold_min=2, hold_max=5, confidence=0.60,
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
         )
+        if sig is None:
+            return None
         # 외국인/기관 3일 순매수는 scanner에서 수급 등급으로 반영
         sig.risk_warnings = ['외국인/기관 3일 순매수 확인 권장']
         return sig

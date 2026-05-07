@@ -51,6 +51,8 @@ class StaggeringVolume(BaseStrategy):
             signal_date=str(df.index[-1].date()) if hasattr(df.index[-1], 'date') else '',
             reason=reason,
         )
+        if sig is None:
+            return None
         sig.risk_warnings = warnings
         return sig
 

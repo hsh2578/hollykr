@@ -273,8 +273,6 @@ def main():
             )
         else:
             from scripts.telegram_alert import send_message
-            import asyncio
-            from datetime import datetime
             today = datetime.now().strftime('%Y-%m-%d')
             no_signal_msg = (
                 f"HollyKR ({today})\n"
