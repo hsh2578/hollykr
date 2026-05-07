@@ -23,15 +23,22 @@ from scripts.screeners.holly_kr.filters.market_filter import (
 )
 
 # ============================================================================
-# 설정 (Phase 5: 사용자 컨셉 — 32개 영구 후보, 점수 기반 Top N)
+# 설정 (Phase F: 듀얼 시간 척도 + ALPHA 풀 한정)
 # ============================================================================
-LOOKBACK_DAYS = 60          # 룩백 기간 (거래일, 약 3개월)
-MIN_WIN_RATE = 0.0          # 승률 제한 없음 (Top N으로 자연 선별)
-MIN_PROFIT_FACTOR = 1.0     # PF 최소 1.0 (손익분기) — passed 라벨용
-MIN_TOTAL_RETURN = 0.0      # 총수익 음수만 아니면 OK
-MAX_ACTIVE = 10             # 하루 최대 활성 전략
-MIN_ACTIVE = 5              # 하루 최소 활성 전략 (사용자 시그널 충분히)
-HYSTERESIS_MIN_PERIODS = 1  # 3 서브기간 중 1개만 통과해도 OK (관대하게)
+LOOKBACK_60D = 60           # 단기: 60일 (최근 적응)
+LOOKBACK_180D = 180         # 중기: 180일 (사이클 안정성)
+LOOKBACK_DAYS = LOOKBACK_60D  # backward compat
+MIN_WIN_RATE = 0.0
+MIN_PROFIT_FACTOR = 1.0
+MIN_TOTAL_RETURN = 0.0
+MAX_ACTIVE = 10             # 하루 최대 활성 전략 (ALPHA 풀 + 일부)
+MIN_ACTIVE = 3              # 하루 최소 활성 전략
+HYSTERESIS_MIN_PERIODS = 1
+
+# 듀얼 점수 가중치 (Phase F)
+WEIGHT_60D = 0.40   # 최근 적응
+WEIGHT_180D = 0.40  # 사이클 안정성
+WEIGHT_5Y = 0.20    # 5년 메타데이터 (ALPHA 풀에서)
 
 
 @dataclass
@@ -251,86 +258,96 @@ def _evaluate_sub_period(
     )
 
 
-def select_strategies(
+def select_strategies_dual(
     strategies: List[BaseStrategy],
     universe_ohlcv: Dict[str, pd.DataFrame],
     universe_info: pd.DataFrame,
     regime_info: Optional[dict] = None,
-    lookback: int = LOOKBACK_DAYS,
     max_active: int = MAX_ACTIVE,
     min_active: int = MIN_ACTIVE,
 ) -> Tuple[List[BaseStrategy], List[StrategyMetrics]]:
-    """
-    야간 전략 선정.
+    """Phase F: 듀얼 시간 척도 평가 (60일 + 180일 + 5년 메타).
 
-    Args:
-        strategies: 전체 전략 목록
-        universe_ohlcv: {ticker: DataFrame} OHLCV 딕셔너리
-        universe_info: 유니버스 DataFrame (Code, Name, Sector, ...)
-        regime_info: get_market_regime() 결과 (None이면 자동 조회)
-        lookback: 룩백 기간 (거래일)
-        max_active: 최대 활성 전략 수
-        min_active: 최소 활성 전략 수
+    score = 0.4 × 60일점수 + 0.4 × 180일점수 + 0.2 × 5년메타점수
 
-    Returns:
-        (활성 전략 리스트, 전략별 메트릭스 리스트)
+    ALPHA 풀 한정 (alpha_pool.json 있을 때만), 없으면 모든 전략 평가.
     """
+    from scripts.screeners.holly_kr.alpha_pool import (
+        load_alpha_pool, get_alpha_metadata
+    )
+
     if regime_info is None:
         regime_info = get_market_regime()
 
     regime = regime_info.get('regime', '횡보장')
-    print(f"\n[야간 전략 선정] 시장 레짐: {regime}")
-    print(f"  룩백: {lookback}거래일 (3개 서브기간 히스테리시스), "
-          f"최소 승률: {MIN_WIN_RATE*100:.0f}%, 최소 PF: {MIN_PROFIT_FACTOR}")
-    print("=" * 60)
 
-    # 서브기간 정의 (역순: 오래된 기간부터)
-    # Period 1: days 60-41, Period 2: days 40-21, Period 3: days 20-1
-    sub_periods = [
-        (lookback, lookback - 19),      # Period 1: 가장 오래된 20일
-        (lookback - 20, lookback - 39),  # Period 2: 중간 20일
-        (20, 1),                         # Period 3: 최근 20일
-    ]
+    # ALPHA 풀 확인 (있으면 풀 한정 평가)
+    alpha_pool = load_alpha_pool()
+    if alpha_pool:
+        pool_names = {s['name'] for s in alpha_pool['alpha_strategies']}
+        eligible_strategies = [s for s in strategies if s.name in pool_names]
+        print(f"\n[야간 전략 선정 — 듀얼 시간 척도] 시장 레짐: {regime}")
+        print(f"  ALPHA 풀: {len(eligible_strategies)}개 (총 {len(strategies)}개 중)")
+        print(f"  평가: 60일 + 180일 + 5년 메타 가중합")
+    else:
+        eligible_strategies = list(strategies)
+        print(f"\n[야간 전략 선정 — 듀얼 시간 척도] 시장 레짐: {regime}")
+        print(f"  ALPHA 풀 없음 → 전체 {len(eligible_strategies)}개 평가")
+        print(f"  ※ 5년 백테스트 후 alpha_pool.json 생성 권장")
+
+    print("=" * 60)
 
     all_metrics: List[StrategyMetrics] = []
 
-    for strategy in strategies:
-        # 레짐 가중치
+    for strategy in eligible_strategies:
         rw = get_category_weight(regime_info, strategy.category)
 
-        # 전체 룩백 시뮬레이션
-        trades = _simulate_signals_on_history(
-            strategy, universe_ohlcv, universe_info, lookback=lookback
+        # 60일 점수
+        trades_60 = _simulate_signals_on_history(
+            strategy, universe_ohlcv, universe_info, lookback=LOOKBACK_60D
+        )
+        m_60 = _calc_metrics(strategy, trades_60, regime_weight=rw, sub_period_passes=2)
+
+        # 180일 점수
+        trades_180 = _simulate_signals_on_history(
+            strategy, universe_ohlcv, universe_info, lookback=LOOKBACK_180D
+        )
+        m_180 = _calc_metrics(strategy, trades_180, regime_weight=rw, sub_period_passes=2)
+
+        # 5년 메타 점수 (alpha_pool에서)
+        meta = get_alpha_metadata(strategy.name) if alpha_pool else None
+        if meta:
+            # 5년 ALPHA 등급별 점수
+            tier_score = {'ALPHA': 1.0, 'CONSISTENT': 0.7, 'BORDERLINE': 0.4}.get(meta['tier'], 0.0)
+            holdout_pf = meta.get('holdout_pf', 0)
+            score_5y = 0.5 * tier_score + 0.5 * min(holdout_pf / 3.0, 1.0)
+        else:
+            score_5y = 0.5  # 메타 없으면 중립
+
+        # 듀얼 점수 합성
+        composite = (
+            WEIGHT_60D * m_60.composite_score +
+            WEIGHT_180D * m_180.composite_score +
+            WEIGHT_5Y * score_5y
         )
 
-        # 히스테리시스: 3개 서브기간 각각 통과 여부 판정
-        period_passes = 0
-        for p_start, p_end in sub_periods:
-            if _evaluate_sub_period(strategy, trades, lookback, p_start, p_end):
-                period_passes += 1
+        # 종합 metrics (60일 기준 + 듀얼 점수)
+        m_60.composite_score = composite  # 합성 점수로 덮어쓰기
+        all_metrics.append(m_60)
 
-        # 성과 지표 계산 (서브기간 통과 수 반영)
-        m = _calc_metrics(strategy, trades, regime_weight=rw,
-                          sub_period_passes=period_passes)
-        all_metrics.append(m)
+        status = "ALPHA" if meta and meta.get('tier') == 'ALPHA' else (
+                 "CONS" if meta and meta.get('tier') == 'CONSISTENT' else " ")
+        print(f"  [{status:<5}] {strategy.name:<25s} | "
+              f"60일 PF={m_60.profit_factor:.2f} N={m_60.signal_count:2d} | "
+              f"180일 PF={m_180.profit_factor:.2f} N={m_180.signal_count:2d} | "
+              f"5년 {score_5y:.2f} | Score={composite:.3f}")
 
-        status = "PASS" if m.passed else "FAIL"
-        print(f"  {strategy.name:<25s} | WR={m.win_rate:.1%} PF={m.profit_factor:.2f} "
-              f"RR={m.avg_rr_ratio:.2f} N={m.signal_count:3d} "
-              f"RW={rw:.1f} Score={m.composite_score:.3f} "
-              f"Sub={period_passes}/3 [{status}]")
-
-    # Phase 5 사용자 컨셉: 32개 모두 영구 후보. 점수 순 Top N 선정.
-    #   - "passed" 라벨은 통계적 합격 표시용 (참고 정보)
-    #   - 실제 ACTIVE 선정은 composite_score 순위로만 결정
-    #   - 거래수 0인 전략은 평가 불가 → 후순위
+    # Top N 선정 (점수 순)
     rated = [m for m in all_metrics if m.signal_count > 0]
     rated.sort(key=lambda m: -m.composite_score)
-
-    # Top max_active 선정 (passed 무관)
     selected_metrics = rated[:max_active]
 
-    # 너무 적으면 거래수 0 전략도 통계적 PROVEN 우선순위로 추가
+    # 부족 시 ALPHA 풀의 거래 0 전략도 추가
     if len(selected_metrics) < min_active:
         unrated = [m for m in all_metrics if m.signal_count == 0]
         for m in unrated:
@@ -339,21 +356,36 @@ def select_strategies(
             selected_metrics.append(m)
 
     # 전략 객체 매핑
-    name_to_strategy = {s.name: s for s in strategies}
+    name_to_strategy = {s.name: s for s in eligible_strategies}
     selected_strategies = [
         name_to_strategy[m.strategy_name]
         for m in selected_metrics
         if m.strategy_name in name_to_strategy
     ]
 
-    passed_count = sum(1 for m in all_metrics if m.passed)
-    print(f"\n  전체 후보: {len(strategies)}개 (모두 영구 보존)")
-    print(f"  거래 발생 전략: {len(rated)}개")
-    print(f"  통계적 PASS 라벨: {passed_count}개 (참고용)")
+    print(f"\n  전체 후보: {len(eligible_strategies)}개")
+    print(f"  거래 발생: {len(rated)}개")
     print(f"  오늘의 ACTIVE (Top {max_active}): {len(selected_strategies)}개")
     for i, m in enumerate(selected_metrics, 1):
-        pass_mark = "PASS" if m.passed else "    "
-        print(f"    {i:2d}. [{pass_mark}] {m.strategy_name:<25s} Score={m.composite_score:.3f} "
-              f"(WR={m.win_rate:.1%} PF={m.profit_factor:.2f} N={m.signal_count})")
+        meta = get_alpha_metadata(m.strategy_name) if alpha_pool else None
+        tier_label = meta.get('tier', '   ') if meta else '   '
+        print(f"    {i:2d}. [{tier_label:<5}] {m.strategy_name:<25s} Score={m.composite_score:.3f}")
 
     return selected_strategies, all_metrics
+
+
+# 호환성: 기존 select_strategies 호출도 듀얼 시간 척도로 자동 라우팅
+def select_strategies(
+    strategies: List[BaseStrategy],
+    universe_ohlcv: Dict[str, pd.DataFrame],
+    universe_info: pd.DataFrame,
+    regime_info: Optional[dict] = None,
+    lookback: int = LOOKBACK_DAYS,  # 무시됨 (듀얼 시간 척도)
+    max_active: int = MAX_ACTIVE,
+    min_active: int = MIN_ACTIVE,
+) -> Tuple[List[BaseStrategy], List[StrategyMetrics]]:
+    """기존 호출과 호환. select_strategies_dual로 라우팅."""
+    return select_strategies_dual(
+        strategies, universe_ohlcv, universe_info,
+        regime_info=regime_info, max_active=max_active, min_active=min_active,
+    )

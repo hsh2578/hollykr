@@ -81,7 +81,13 @@ def format_signal_message(signals, market_regime: str = '',
                           total_strategies: int = 32,
                           strong_strategies: list = None,
                           watch_strategies: list = None) -> str:
-    """시그널 리스트 -> 텔레그램 메시지 (강력/관심 2단계 포맷)"""
+    """시그널 리스트 -> 텔레그램 메시지.
+
+    Phase F: ALPHA 풀 메타데이터 활용한 Tier 차별화
+    - Tier 1 (5년 ALPHA): 영구 검증된 알파 (별도 표시)
+    - Tier 2 (CONSISTENT/BORDERLINE): 5년 일관성 있음
+    - Tier 3 (그 외): 60일 단기 적응
+    """
     if not signals:
         return "HollyKR: 시그널 없음"
 
@@ -89,52 +95,91 @@ def format_signal_message(signals, market_regime: str = '',
     watch_strategies = watch_strategies or []
 
     today = datetime.now().strftime('%Y-%m-%d')
-
-    # 진입 모드
     mode = getattr(signals[0], 'entry_mode', 'open') if signals else 'open'
     entry_mode_str = '당일 종가' if mode == 'close' else '다음날 시가'
 
     if active_strategies == 0:
         active_strategies = len(set(s.strategy_name for s in signals))
 
-    # 강력/관심 분류
-    strong_sigs = [s for s in signals if s.strategy_name in strong_strategies]
-    watch_sigs = [s for s in signals if s.strategy_name in watch_strategies]
-    other_sigs = [s for s in signals if s.strategy_name not in strong_strategies
-                  and s.strategy_name not in watch_strategies]
+    # ALPHA 풀에서 tier 정보 로드 (있으면)
+    tier_map = {}
+    try:
+        from scripts.screeners.holly_kr.alpha_pool import load_alpha_pool
+        pool = load_alpha_pool()
+        if pool:
+            tier_map = {s['name']: s for s in pool['alpha_strategies']}
+    except Exception:
+        pass
 
-    # 각 그룹 내 신뢰도 순 정렬
-    strong_sigs.sort(key=lambda s: -s.confidence)
-    watch_sigs.sort(key=lambda s: -s.confidence)
+    # Tier 분류
+    tier1_sigs = []  # 5년 ALPHA
+    tier2_sigs = []  # 5년 CONSISTENT/BORDERLINE
+    tier3_sigs = []  # 60일 단기 적응 (5년 미검증)
 
-    lines = [
-        f"HollyKR ({today})",
-    ]
+    for s in signals:
+        meta = tier_map.get(s.strategy_name)
+        if meta and meta.get('tier') == 'ALPHA':
+            tier1_sigs.append((s, meta))
+        elif meta and meta.get('tier') in ('CONSISTENT', 'BORDERLINE'):
+            tier2_sigs.append((s, meta))
+        else:
+            tier3_sigs.append((s, None))
+
+    # 신뢰도 순
+    tier1_sigs.sort(key=lambda x: -x[0].confidence)
+    tier2_sigs.sort(key=lambda x: -x[0].confidence)
+    tier3_sigs.sort(key=lambda x: -x[0].confidence)
+
+    lines = [f"HollyKR ({today})"]
     if market_regime:
         lines.append(f"시장: {market_regime}")
-    lines.extend([
-        f"강력 {len(strong_sigs)}개 | 관심 {len(watch_sigs)}개",
-        f"진입: {entry_mode_str}",
-        "",
-    ])
+    lines.append(f"진입: {entry_mode_str}")
 
-    # --- 강력 매수 (PF 1.2+) ---
-    if strong_sigs:
-        lines.append("== 강력 매수 ==")
-        for s in strong_sigs[:10]:
+    # ALPHA 풀 표시
+    if tier_map:
+        n_tier1 = len(tier1_sigs)
+        n_tier2 = len(tier2_sigs)
+        n_tier3 = len(tier3_sigs)
+        lines.append(f"5년 ALPHA {n_tier1}개 | 일관성 {n_tier2}개 | 단기적응 {n_tier3}개")
+    else:
+        lines.append(f"시그널 {len(signals)}개 (5년 ALPHA 풀 미생성)")
+
+    lines.append("")
+
+    # Tier 1: 5년 ALPHA (가장 신뢰)
+    if tier1_sigs:
+        lines.append("=== 🏆 5년 검증 ALPHA ===")
+        for s, meta in tier1_sigs[:5]:
+            sig_lines = _format_one_signal(s)
+            # ALPHA 메타 추가
+            if meta:
+                sig_lines.insert(-1, f"  [5년 PF {meta['holdout_pf']:.2f} | "
+                                     f"Sharpe {meta['holdout_sharpe']:.2f} | "
+                                     f"Hold-out 검증 ✓]")
+            lines.extend(sig_lines)
+
+    # Tier 2: CONSISTENT/BORDERLINE
+    if tier2_sigs:
+        lines.append("=== 🟢 5년 일관성 PASS ===")
+        for s, meta in tier2_sigs[:5]:
+            sig_lines = _format_one_signal(s)
+            if meta:
+                sig_lines.insert(-1, f"  [5년 PF {meta['holdout_pf']:.2f} | "
+                                     f"Sharpe {meta['holdout_sharpe']:.2f}]")
+            lines.extend(sig_lines)
+
+    # Tier 3: 단기 적응 (5년 미검증)
+    if tier3_sigs:
+        if tier_map:
+            lines.append("=== 🟡 60일 단기 적응 ===")
+        for s, _ in tier3_sigs[:8]:
             lines.extend(_format_one_signal(s))
 
-    # --- 관심 종목 (PF 1.0~1.2) ---
-    if watch_sigs:
-        lines.append("== 관심 종목 ==")
-        for s in watch_sigs[:15]:
-            lines.extend(_format_one_signal(s))
-
-    # --- 기타 (분류 안 된 시그널) ---
-    if other_sigs and not strong_strategies:
-        for s in sorted(other_sigs, key=lambda s: -s.confidence)[:10]:
-            lines.extend(_format_one_signal(s))
-
+    lines.append("─────────────────────")
+    if tier_map:
+        lines.append("※ 🏆 = 5년 cross-regime + Hold-out 1년 검증")
+        lines.append("※ 🟢 = 5년 일관성 (Sharpe 1.0+)")
+        lines.append("※ 🟡 = 최근 60일 시장 적응 (5년 미검증)")
     lines.append("투자 결정은 본인의 판단과 책임입니다.")
     return '\n'.join(lines)
 

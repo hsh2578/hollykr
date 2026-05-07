@@ -1,9 +1,8 @@
 name: HollyKR Daily Backtest
 
 on:
-  schedule:
-    # 평일 20:00 KST (UTC 11:00)
-    - cron: '0 11 * * 1-5'
+  # Phase F: 매일 자동 실행 비활성화 (분기 5년 백테스트로 대체)
+  # 수동 트리거만 가능 (디버깅/검증용)
   workflow_dispatch:
     inputs:
       days:
