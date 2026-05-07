@@ -51,10 +51,40 @@ RISK_PER_TRADE_PCT = 0.005        # 자본의 0.5%만 트레이드당 위험
 # ============================================================================
 # 청산 규칙 (백테스트 ↔ 실전 일치)
 # ============================================================================
-TRAILING_STOP_PCT = 0.05          # 트레일링 스탑 5% (목표가 도달 후)
+TRAILING_STOP_PCT = 0.05          # 트레일링 스탑 5% (기본값, 카테고리별 override)
 PARTIAL_PROFIT_PCT = 0.5          # 목표가 도달 시 50% 익절
 FIRST_DAY_LOSS_PCT = -0.03        # 진입 다음날 -3% 음봉 마감 → 시가 청산 (Minervini 룰)
 GAP_DOWN_EXIT_AT_OPEN = True      # 시초가 < 손절가 → 시초가 즉시 청산 (실제 한국 시장)
+
+# ============================================================================
+# Phase C: 카테고리별 청산 전략 차별화 (Build Alpha 연구 + López de Prado)
+# ============================================================================
+# 추세 추종/돌파: 트레일링 8% (상승 여유 확보, 노이즈 컷)
+# 평균회귀: 트레일링 X (mean reversion에서 stop은 종종 해로움 — Build Alpha)
+# 모멘텀/단기: 트레일링 5% (빠른 청산)
+
+CATEGORY_TRAILING_PCT = {
+    'breakout':         0.08,  # 돌파: 8% (추세 따라가기)
+    'trend_following':  0.10,  # 추세: 10% (긴 호흡)
+    'trend':            0.10,
+    'momentum':         0.06,  # 모멘텀: 6%
+    'gap_momentum':     0.05,  # 갭 모멘텀: 5% (빠른 청산)
+    'accumulation':     0.08,  # 매집: 8%
+    'multi_factor':     0.06,
+    'pullback':         0.05,  # 눌림: 5% (단기)
+    'support_bounce':   0.05,
+    'mean_reversion':   0.04,  # 평균회귀: 4% (타이트, 빨리 청산)
+    'reversal':         0.05,
+    'legendary':        0.08,  # Darvas/Weinstein/Minervini
+}
+
+# First-day -3% 룰 적용 카테고리
+# - 추세/돌파: 적용 (Minervini 정석)
+# - 평균회귀/지지반등: 미적용 (작은 음봉도 정상)
+FIRST_DAY_RULE_CATEGORIES = {
+    'breakout', 'trend_following', 'trend', 'momentum',
+    'gap_momentum', 'accumulation', 'legendary',
+}
 
 # ============================================================================
 # 진입 게이트 (Risk/Reward)

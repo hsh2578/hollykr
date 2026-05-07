@@ -31,6 +31,7 @@ from scripts.screeners.holly_kr.config import (
     LOOKBACK_DAYS, OUTPUT_DIR, ROUND_TRIP_COST,
     TRAILING_STOP_PCT, PARTIAL_PROFIT_PCT, FIRST_DAY_LOSS_PCT,
     GAP_DOWN_EXIT_AT_OPEN,
+    CATEGORY_TRAILING_PCT, FIRST_DAY_RULE_CATEGORIES,
 )
 from scripts.screeners.holly_kr.scanner import PHASE1_STRATEGIES, PHASE2_STRATEGIES, ALL_STRATEGIES
 
@@ -43,10 +44,11 @@ from scripts.screeners.holly_kr.scanner import PHASE1_STRATEGIES, PHASE2_STRATEG
 class Trade:
     """개별 거래 기록 (실전 청산 일치)."""
     strategy: str
-    ticker: str
-    name: str
-    entry_date: str
-    entry_price: float
+    category: str = ''           # Phase C: 카테고리별 trailing 적용용
+    ticker: str = ''
+    name: str = ''
+    entry_date: str = ''
+    entry_price: float = 0.0
     exit_date: str = ''
     exit_price: float = 0.0
     exit_reason: str = ''      # target, stop_loss, time_exit, gap_down, first_day, trailing, partial+trailing 등
@@ -400,6 +402,11 @@ def _simulate_strategy(strategy, universe_ohlcv: Dict[str, pd.DataFrame],
                     active_trade = None
                     continue
 
+                # Phase C: 카테고리별 trailing 비율 (Build Alpha 연구)
+                trailing_pct = CATEGORY_TRAILING_PCT.get(
+                    active_trade.category, TRAILING_STOP_PCT
+                )
+
                 # ============================================================
                 # 우선순위 3: 목표가 도달 시 50% 익절 (한 번만)
                 # ============================================================
@@ -407,17 +414,17 @@ def _simulate_strategy(strategy, universe_ohlcv: Dict[str, pd.DataFrame],
                     active_trade.target_hit = True
                     active_trade.partial_done = True
                     active_trade.partial_exit_price = target_price * (1 - slippage_pct)
-                    # 트레일링 스탑 초기화 (목표 도달 시점부터)
+                    # 트레일링 스탑 초기화 (카테고리별 % 적용)
                     active_trade.trail_stop_price = (
-                        active_trade.max_close_during_hold * (1 - TRAILING_STOP_PCT)
+                        active_trade.max_close_during_hold * (1 - trailing_pct)
                     )
                     # 50%만 청산, 나머지 50%는 계속 보유 → 다른 청산 조건 평가 진행
 
                 # ============================================================
-                # 우선순위 4: 트레일링 스탑 (목표 도달 후만)
+                # 우선순위 4: 트레일링 스탑 (목표 도달 후만, 카테고리별 %)
                 # ============================================================
                 if active_trade.target_hit:
-                    new_trail = active_trade.max_close_during_hold * (1 - TRAILING_STOP_PCT)
+                    new_trail = active_trade.max_close_during_hold * (1 - trailing_pct)
                     active_trade.trail_stop_price = max(
                         active_trade.trail_stop_price, new_trail
                     )
@@ -439,10 +446,11 @@ def _simulate_strategy(strategy, universe_ohlcv: Dict[str, pd.DataFrame],
                         continue
 
                 # ============================================================
-                # 우선순위 5: First-day -3% 룰 (Minervini)
-                # 진입 다음날(days_held=1) 음봉 -3% 마감 → 그 다음날 시가 청산
+                # 우선순위 5: First-day -3% 룰 (Phase C: 추세/돌파 카테고리만)
+                # 평균회귀/지지반등은 작은 음봉도 정상이라 미적용
                 # ============================================================
-                if days_held == 1 and not active_trade.target_hit:
+                if (days_held == 1 and not active_trade.target_hit
+                        and active_trade.category in FIRST_DAY_RULE_CATEGORIES):
                     first_day_return = (today_close - active_trade.entry_price) / active_trade.entry_price
                     if first_day_return <= FIRST_DAY_LOSS_PCT:
                         next_idx = current_idx + 1
@@ -503,6 +511,7 @@ def _simulate_strategy(strategy, universe_ohlcv: Dict[str, pd.DataFrame],
 
             active_trade = Trade(
                 strategy=strategy.name,
+                category=strategy.category,  # Phase C: 카테고리별 청산용
                 ticker=ticker,
                 name=name,
                 entry_date=entry_date,
