@@ -205,7 +205,48 @@ def main():
         else:
             sig.signal_tier = 'WATCH'  # 분류 외 모두 WATCH
 
-    # 최종 10개 시그널에 KIS 실시간 현재가 붙이기
+    # ========================================================================
+    # Phase 10: 서브에이전트 통합 (Macro → Theme → Risk)
+    # ========================================================================
+    algopick_picks = []  # 알고픽 별도 시그널 (Theme Agent)
+    try:
+        # Macro Agent: 시장 환경 → 모든 시그널 confidence × multiplier
+        from scripts.screeners.holly_kr.agents.macro_agent import MacroAgent
+        macro = MacroAgent().evaluate()
+        macro_mult = macro['confidence_multiplier']
+        if macro_mult < 1.0:
+            print(f"  [Macro Agent] 신뢰도 ×{macro_mult:.2f} (위험 ↑)")
+            for sig in signals:
+                sig.confidence = min(0.95, sig.confidence * macro_mult)
+
+        # Theme Agent: 시그널 종목 ↔ 핫 테마 매칭 + 알고픽 Top 3 발굴
+        from scripts.screeners.holly_kr.agents.theme_agent import ThemeAgent
+        theme = ThemeAgent()
+        theme_result = theme.evaluate()
+        if theme_result.get('hot_themes'):
+            print(f"  [Theme Agent] 핫 테마: {', '.join(theme_result['hot_themes'])}")
+            theme.adjust_signals(signals)
+            algopick_picks = theme_result.get('top3_picks', [])
+
+        # Risk Agent: 종목 위험 평가 → 폐기 또는 confidence 보정
+        from scripts.screeners.holly_kr.agents.risk_agent import RiskAgent
+        risk = RiskAgent()
+        before_count = len(signals)
+        signals = risk.adjust_signals(signals)
+        after_count = len(signals)
+        if before_count > after_count:
+            print(f"  [Risk Agent] {before_count - after_count}개 시그널 위험 컷")
+
+        # 신뢰도 재정렬 (에이전트 보정 후)
+        signals.sort(key=lambda s: -s.confidence)
+        signals = signals[:10]  # 최종 Top 10
+
+    except Exception as e:
+        print(f"  [Agent 파이프라인 오류] {e}")
+        import traceback
+        traceback.print_exc()
+
+    # 최종 시그널에 KIS 실시간 현재가 붙이기
     try:
         from scripts.kis_price import get_current_price
         for sig in signals:
@@ -214,6 +255,18 @@ def main():
                 sig.current_price = cp
     except Exception as e:
         print(f"  [현재가 조회 실패] {e}")
+
+    # Postmortem: 오늘 시그널 로그 저장 + 어제 결과 업데이트
+    try:
+        from scripts.screeners.holly_kr.agents.postmortem_agent import PostmortemAgent
+        pm = PostmortemAgent()
+        pm.log_signals(signals, regime=market_regime if 'market_regime' in dir() else '')
+        outcome = pm.update_outcomes()
+        if outcome.get('updated_count', 0) > 0:
+            print(f"  [Postmortem] 어제 시그널 {outcome['updated_count']}개 결과 업데이트 "
+                  f"(평균 PnL {outcome['avg_1d_pnl']*100:+.2f}%)")
+    except Exception as e:
+        print(f"  [Postmortem 오류] {e}")
 
     print_signals(signals)
 
