@@ -4,9 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-HollyKR — Trade Ideas Holly AI의 한국 시장 적응 버전. 매일 KOSPI/KOSDAQ 시총 1,000억+ 종목을 37개 전략으로 스캔, 텔레그램으로 시그널 송출. **자동매매 X**, 사용자가 시그널 보고 직접 매수/매도 판단.
+HollyKR — Trade Ideas Holly AI의 한국 시장 적응 버전. 매일 KOSPI/KOSDAQ 시총 1,000억+ 종목을 30개 전략으로 스캔, 텔레그램으로 시그널 송출. **자동매매 X**, 사용자가 시그널 보고 직접 매수/매도 판단.
 
-핵심 컨셉: **37개 전략 모두 영구 후보**. 매일 60일 성과 기반으로 점수 매겨 Top 10 ACTIVE 선정 → 그 전략들만 시그널. 영구 제외 X, 매일 동적 로테이션. (Trade Ideas Holly의 "매일 밤 70+ 전략 평가 → 다음날 적용" 철학)
+핵심 컨셉 (Phase G-5 하이브리드):
+1. **분기 5년 strict 검증 ALPHA pool** (현재 2개: ma_convergence + new_high_52w_approach) — 항상 ACTIVE 보존
+2. **매일 60일+180일+5년 메타 평가** — 풀 외 28개에서 점수 Top 8 선정 → 합쳐 ACTIVE 10개
+3. **매일 14:20 daily-scan** — ACTIVE 10개로 시그널 발생 → 4 agents (Macro/Theme/Risk/Postmortem) 보정 → 텔레그램
 
 ## Run Commands
 
