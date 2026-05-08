@@ -1,7 +1,7 @@
 name: HollyKR Nightly Strategy Selection
 
-# 매일 평일 19:00 KST: 32개 전략 모두 60일 평가 → Top 10 ACTIVE 선정 → 다음날 14:20 스캔이 사용
-# 사용자 컨셉: 32개 영구 후보 + 일별 점수 기반 동적 선정
+# 매일 평일 19:00 KST: 28개 전략 평가 (Phase G-6) → Top 10 ACTIVE 선정 → 다음날 14:20 스캔이 사용
+# Phase G-5 하이브리드: ALPHA pool 보존 + 풀 외 60/180일+5년 메타 점수 평가
 
 on:
   schedule:
@@ -46,7 +46,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run nightly strategy selection (60-day, all 32 strategies)
+      - name: Run nightly strategy selection (60+180-day, 28 strategies, hybrid)
         env:
           KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
           KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}

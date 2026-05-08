@@ -53,7 +53,9 @@ jobs:
           KIS_BASE_URL: https://openapivts.koreainvestment.com:29443
           PYTHONIOENCODING: utf-8
         run: |
-          python -X utf8 -m scripts.screeners.holly_kr.backtest_5y --sample 200
+          # Phase G-6: sample 200 → 1500 (Phase F 정통, 시총 1000억+ 거의 전체 커버)
+          # Phase G-4: 학습 2년 + Hold-out 3년 (5년 strict, 다양한 시장 환경 검증)
+          python -X utf8 -m scripts.screeners.holly_kr.backtest_5y --sample 1500 --workers 4
 
       - name: Commit alpha_pool.json
         run: |
