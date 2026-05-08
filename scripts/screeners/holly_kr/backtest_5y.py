@@ -60,8 +60,8 @@ from scripts.screeners.holly_kr.alpha_pool import save_alpha_pool, classify_stra
 #   2. learn_end (실제 데이터 마지막) 기준으로 sliding
 #   3. 그리드 서치는 ALPHA 통과 후 Phase F-4에서 별도 실행
 # ============================================================================
-HOLDOUT_DAYS = 252       # 1년 hold-out (절대 학습 X)
-LEARN_DAYS = 750         # 3년 학습
+HOLDOUT_DAYS = 750       # 3년 hold-out (Phase G-4: 5년 데이터 활용 극대화 — 다양한 시장 환경)
+LEARN_DAYS = 500         # 2년 학습
 NUM_WINDOWS = 4          # 4 윈도우 워크포워드 (12 → 4)
 WINDOW_OFFSET = 90       # 90일 슬라이딩 (4 × 90 = 1년 slide)
 TEST_DAYS = 200          # 각 윈도우 200일 (Train 140 + Test 60)
@@ -120,7 +120,7 @@ def split_data_holdout(ohlcv_dict: Dict[str, pd.DataFrame],
         # Hold-out: holdout_cutoff 이후 + 학습 마지막 200일 (forward calc 위함)
         holdout_df = df[df.index >= holdout_cutoff - pd.Timedelta(days=300)]
 
-        if len(learn_df) >= 800 and len(holdout_df) >= 252:
+        if len(learn_df) >= 400 and len(holdout_df) >= 700:
             learn_data[ticker] = learn_df
             holdout_data[ticker] = holdout_df
 

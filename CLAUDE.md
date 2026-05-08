@@ -116,33 +116,44 @@ data/holly_kr/                   # Postmortem agent 누적 로그
 
 ### 분기 5년 Hold-out 검증 ALPHA pool (`data/holly_kr/alpha_pool.json`)
 
-마지막 갱신: 2026-05-08, sample 1500, MDD 정확 측정 후.
+마지막 갱신: 2026-05-08, sample 1500, **5년 strict (학습 2년 + Hold-out 3년) 검증 후**.
 
-| 전략 | tier | Hold-out PF | Sharpe | 거래 | MDD | Calmar |
-|---|---|---|---|---|---|---|
-| **tailwind** ⭐ | ALPHA | 1.72 | 1.50 | 52 | -10.9% | 5.03 |
-| **new_high_52w_approach** | CONSISTENT | 1.36 | 0.89 | 79 | -24.3% | 2.97 |
-| **close_to_a_cross** | CONSISTENT | 1.26 | 0.71 | 240 | -40.6% | 3.92 |
+| 전략 | tier | Hold-out PF | Sharpe | 거래 | MDD |
+|---|---|---|---|---|---|
+| **ma_convergence** | CONSISTENT | 1.30 | 0.45 | 723 | -30% |
+| **new_high_52w_approach** | CONSISTENT | 1.19 | 0.48 | 165 | -32% |
 
 `nightly_selector` 듀얼 시간 척도가 이 풀 안에서만 평가. 풀 비어있으면 37개 전체로 fallback.
 
-### 분기 백테스트에서 boundary (PF≥1.0 but Sharpe<0.3 — 추가 강화 후보)
+### 4년 baseline → 5년 strict 변경 이유
 
-- aqr_tsmom: PF 1.18, Sharpe 0.29 (Phase H 거장 신규, 0.01 차이로 컷)
-- clenow_momentum: PF 1.12, Sharpe 0.22 (Phase H, 거래 6914건)
-- weinstein_stage: PF 1.04, Sharpe 0.05
-- donchian_breakout: PF 1.02, Sharpe 0.05 (Phase H 거장 신규)
-- wake_up_call: PF 1.01, Sharpe 0.03
-- quarterback: PF 0.99, Sharpe -0.04
-- box_range_watch: PF 0.97, Sharpe -0.05 (이전 워크포워드 검증 ALPHA — sample 1500 + hold-out에서 boundary로 약화)
+```
+4년 baseline (학습 3년 + Hold-out 1년): ALPHA 1 + CONSISTENT 2
+  - tailwind ALPHA PF 1.72 (Sharpe 1.50)
+  - close_to_a_cross CONSISTENT PF 1.26
+  - new_high_52w_approach CONSISTENT PF 1.36
+
+5년 strict (학습 2년 + Hold-out 3년): ALPHA 0 + CONSISTENT 2
+  - tailwind → PF 1.04, Sharpe 0.12 (강세장 운빨이었음 확인)
+  - close_to_a_cross → PF 1.13, Sharpe 0.39 (MDD -54%로 컷)
+  - new_high_52w_approach → PF 1.19, Sharpe 0.48 (생존)
+  - ma_convergence → PF 1.30, Sharpe 0.45 (4년에선 거래 0건, 3년 hold-out에서 723거래로 부활)
+```
+
+5년 strict가 더 다양한 시장 환경 (강세 + 약세 + 횡보) 검증 → 진짜 robust 전략만 살아남음.
+
+### 5년 strict에서 boundary (PF≥1.0 but 컷 — 추가 검토)
+
+- close_to_a_cross: PF 1.13, S 0.39, MDD -54% (MDD 컷)
+- tailwind: PF 1.04, S 0.12 (Sharpe 컷, 4년 ALPHA였음)
 
 ### Phase H 시스템 트레이딩 거장 정통 전략 (신규 3개, scanner.py PHASE_H_STRATEGIES)
 
-학술/실무 정통 구현, 모두 PF≥1.0 양수 but Sharpe < 0.3로 ALPHA pool 미진입:
+학술/실무 정통 구현, 5년 strict에서도 ALPHA pool 미진입:
 
-- `clenow_momentum.py` — Andreas Clenow "Stocks on the Move": 90일 회귀 slope × R² + ATR 사이징
-- `donchian_breakout.py` — Donchian (1960s) + Ed Seykota (Market Wizards): 20일 신고가 + 200/50 SMA + 거래량
-- `aqr_tsmom.py` — Moskowitz 학술 + AQR: 12+6+3개월 수익률 sign + Stage 2 + 변동성 컷
+- `clenow_momentum.py` — Clenow "Stocks on the Move": PF 0.90 (5y strict)
+- `donchian_breakout.py` — Donchian-Seykota: PF 0.89 (5y strict)
+- `aqr_tsmom.py` — Moskowitz TSMOM: PF 0.83 (5y strict)
 
 ## Data Sources (글로벌 IP 호환)
 
