@@ -95,7 +95,11 @@ data/holly_kr/                   # Postmortem agent 누적 로그
   holly-quarterly.yml            # 분기 1일 17:00 UTC — 5년 백테스트 → ALPHA pool 갱신
 ```
 
-## 37개 전략 구성
+## 28개 전략 구성 (Phase G-6 정리: 5년 strict 거래 0건 14개 비활성화)
+
+비활성화 14개 (strategy 파일 보존, scanner.py 제외): pushing_the_spring, float_on, staggering_volume, alpha_predators, strong_stock_pulling_back, the_continuation, got_dough, guiding_hand, nice_chart, the_vault, pulling_the_arrow, balloon_under_water, neo_breakout, neo_pullback
+
+
 
 | 카테고리 | 전략 (수) | RR 컷 |
 |---|---|---|
@@ -147,13 +151,19 @@ data/holly_kr/                   # Postmortem agent 누적 로그
 - close_to_a_cross: PF 1.13, S 0.39, MDD -54% (MDD 컷)
 - tailwind: PF 1.04, S 0.12 (Sharpe 컷, 4년 ALPHA였음)
 
-### Phase H 시스템 트레이딩 거장 정통 전략 (신규 3개, scanner.py PHASE_H_STRATEGIES)
+### Phase H 시스템 트레이딩 거장 정통 전략 (신규 5개, scanner.py PHASE_H_STRATEGIES)
 
-학술/실무 정통 구현, 5년 strict에서도 ALPHA pool 미진입:
+학술/실무 정통 구현, 5년 strict (3년 hold-out)에서 모두 ALPHA pool 미진입 (한국 시장 노이즈):
 
-- `clenow_momentum.py` — Clenow "Stocks on the Move": PF 0.90 (5y strict)
-- `donchian_breakout.py` — Donchian-Seykota: PF 0.89 (5y strict)
-- `aqr_tsmom.py` — Moskowitz TSMOM: PF 0.83 (5y strict)
+| 전략 | 출처 | 5년 strict PF | Sharpe |
+|---|---|---|---|
+| `clenow_momentum.py` | Clenow "Stocks on the Move" | 0.90 | -0.20 |
+| `donchian_breakout.py` | Donchian-Seykota | 0.89 | -0.25 |
+| `aqr_tsmom.py` | Moskowitz TSMOM | 0.83 | -0.27 |
+| `bollinger_squeeze.py` | Bollinger + Linda Raschke | 0.86 | -0.34 |
+| `elder_triple_screen.py` | Elder "Trading for a Living" | 0.50 | -2.21 |
+
+**시사점**: 학술 검증된 정통 전략조차 5년 strict (3년 다양한 시장 환경) 한국 시장에선 통과 어려움. nightly_selector가 60일/180일 점수로 평가하여 최근 효과적이면 ACTIVE 선정 가능.
 
 ## Data Sources (글로벌 IP 호환)
 
@@ -374,6 +384,8 @@ python -m scripts.screeners.holly_kr.agents.postmortem_agent
 - **MDD 계산 버그**: `backtest.py:580` `cumulative = np.cumsum(pnls); drawdown = cumulative - peak`은 normalization 없이 PnL 단순 누적 → `MDD -1697%` 같은 비현실적 수치. 수정: `equity = 1 + cumsum(pnls); drawdown = (equity - peak) / peak; max(drawdown, -1.0)`. CONSISTENT 후보들이 MDD -50% 컷에 잘못 걸리는 원인이었음.
 - **backtest_5y.py KeyError 'holdout_min_pf'**: ALPHA_CRITERIA 단순화 (Hold-out 단독 평가) 후 `holdout_validate`의 `pass` 필드 계산이 deleted 키 참조. 6개 전략 ERROR로 평가 누락. ALPHA_CRITERIA에 legacy alias 추가로 해결.
 - **단순 룰 추가형 보완 vs 6요소 통합 재설계**: engulfing/snap_back_long/horseshoe_up에 (a) 50일 SMA + 거래량 보완 시도 → 큰 변화 X, (b) tailwind 패턴 (Stage 2 + multi-confirmation + ATR) 6요소 재설계 시도 → CONSISTENT 0개로 baseline 대비 후퇴. 두 방식 모두 git checkout 롤백. 교훈: **검증된 baseline 보존이 약한 전략 강화보다 우선**, 룰 변경은 단일 전략 sanity check 후 신중히.
+- **run.py nightly mode PHASE1+PHASE2 only 버그**: Phase G-6 fix. PHASE7 (ma_convergence 등) + PHASE_H (clenow 등) 누락 평가. 결과: ALPHA pool 2개 (ma_convergence, new_high_52w_approach)가 ACTIVE.json에 안 들어감. 수정: `from scanner import ALL_STRATEGIES`. 또한 OHLCV 220일 → 500일 (180일 lookback 위함), sample 200 → 1500 (Phase F 정통).
+- **4년 baseline (1년 hold-out)이 강세장 운빨**: tailwind PF 1.72 → 5년 strict (3년 hold-out)에서 PF 1.04로 약화. box_range_watch (이전 워크포워드 ALPHA)도 5년 PF 0.61. 결론: 1년 hold-out은 한국 시장에서 충분 X, 3년 hold-out 권장 (학습 2년 + Hold-out 3년 = 5년 데이터 활용 극대화).
 
 ## Known Limitations
 

@@ -99,31 +99,34 @@ def main():
     start_time = time.time()
 
     if args.nightly:
-        # Phase 5 야간 모드: 32개 전략 모두 60일 평가 → Top 10 ACTIVE 선정 → 저장
+        # Phase 5 야간 모드: 전체 ALL_STRATEGIES 평가 → Top 10 ACTIVE 선정 → 저장
         # 스캔 X (시그널 송출 X). 다음날 14:20 daily-scan이 ACTIVE 사용.
+        # Phase G-6 fix: PHASE1+PHASE2만 사용했던 버그 → ALL_STRATEGIES (28개)
         from scripts.screeners.holly_kr.nightly_selector import select_strategies
         from scripts.screeners.holly_kr.active_strategies import save_active
-        from scripts.screeners.holly_kr.scanner import PHASE1_STRATEGIES, PHASE2_STRATEGIES
+        from scripts.screeners.holly_kr.scanner import ALL_STRATEGIES
         from scripts.screeners.holly_kr.universe import get_universe
         from scripts.ohlcv_data import get_ohlcv
 
-        all_strategies = list(PHASE1_STRATEGIES + PHASE2_STRATEGIES)
-        print(f"\n[Phase 5 Nightly] 32개 전략 모두 60일 평가 (영구 후보)")
+        all_strategies = list(ALL_STRATEGIES)
+        print(f"\n[Phase 5 Nightly] {len(all_strategies)}개 전략 평가 (60일 + 180일 + 5년 메타)")
 
-        # 유니버스 + OHLCV 로드
+        # 유니버스 + OHLCV 로드 (시총 상위 1500 종목 — Phase F 정통)
         universe = get_universe()
-        if len(universe) > 200:
-            universe = universe.nlargest(200, 'MarketCap').reset_index(drop=True)
+        sample_size = 1500
+        if len(universe) > sample_size:
+            universe = universe.nlargest(sample_size, 'MarketCap').reset_index(drop=True)
         print(f"  유니버스: 시총 상위 {len(universe)}개")
 
-        # Stage 2 필터(200일 SMA 필요) + 60일 lookback → 최소 320일 데이터
+        # Stage 2 필터(200일 SMA 필요) + 180일 lookback → 최소 500일 데이터
+        # Phase G-6 fix: 220일 → 500일 (180일 lookback 위해)
         ohlcv_dict = {}
         for _, row in universe.iterrows():
             ticker = row['Code']
-            df = get_ohlcv(ticker, days=320, use_cache=True)
-            if df is not None and len(df) > 220:
+            df = get_ohlcv(ticker, days=500, use_cache=True)
+            if df is not None and len(df) > 250:
                 ohlcv_dict[ticker] = df
-        print(f"  OHLCV 로드: {len(ohlcv_dict)}개 종목 (320일 = 220 Stage2 + 60 lookback + 40 buffer)")
+        print(f"  OHLCV 로드: {len(ohlcv_dict)}개 종목 (500일 = 200 Stage2 + 180 lookback + 120 buffer)")
 
         # 32개 전략 평가 + Top N 선정
         selected, metrics = select_strategies(

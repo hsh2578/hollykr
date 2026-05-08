@@ -75,21 +75,30 @@ from scripts.screeners.holly_kr.strategies.box_range_watch import BoxRangeWatch
 from scripts.screeners.holly_kr.strategies.clenow_momentum import ClenowMomentum
 from scripts.screeners.holly_kr.strategies.donchian_breakout import DonchianBreakout
 from scripts.screeners.holly_kr.strategies.aqr_tsmom import AQRTSMomentum
+from scripts.screeners.holly_kr.strategies.bollinger_squeeze import BollingerSqueeze
+from scripts.screeners.holly_kr.strategies.elder_triple_screen import ElderTripleScreen
 
-# Phase 1: EOD 12개
+# Phase G-6: 5년 strict에서 거래 0건인 14개 자체 패턴 비활성화
+# (Phase 1+2 자체 한국화 패턴 중 학술 검증 X). Strategy 파일은 보존 (향후 활성화 가능).
+# 비활성화: pushing_the_spring, float_on, staggering_volume, alpha_predators,
+#   strong_stock_pulling_back, the_continuation, got_dough, guiding_hand,
+#   nice_chart, the_vault, pulling_the_arrow, balloon_under_water,
+#   neo_breakout, neo_pullback
+# 보존 (학술 검증 + 분기 자연 0): minervini_trend_template, livermore_pivot,
+#   magic_formula, piotroski_fscore
+
+# Phase 1: EOD (학술 검증 8개)
 PHASE1_STRATEGIES = [
-    PushingTheSpring(), Engulfing(), YesterdayHammer(), SnapBackLong(),
+    Engulfing(), YesterdayHammer(), SnapBackLong(),
     HorseshoeUp(), VolumeDoesntLie(), MinerviniTrend(), DarvasBox(),
     WeinsteinStage(), LivermorePivot(), MagicFormula(), PiotroskiFScore(),
 ]
 
-# Phase 2: HYBRID 20개
+# Phase 2: HYBRID (시그널 발생 7개)
 PHASE2_STRATEGIES = [
-    BullishTrendChange(), FloatOn(), WakeUpCall(), StaggeringVolume(),
-    CloseToACross(), AlphaPredators(), BullishPullback(), StrongStockPullingBack(),
-    Quarterback(), Tailwind(), TrendPlay(), TheContinuation(),
-    GotDough(), GuidingHand(), NiceChart(), TheVault(),
-    PullingTheArrow(), BalloonUnderWater(), NeoBreakout(), NeoPullback(),
+    BullishTrendChange(), WakeUpCall(),
+    CloseToACross(), BullishPullback(),
+    Quarterback(), Tailwind(), TrendPlay(),
 ]
 
 # Phase 7 신규 5개
@@ -98,12 +107,13 @@ PHASE7_STRATEGIES = [
     VolumeDryUp(), BoxRangeWatch(),
 ]
 
-# Phase H: 시스템 트레이딩 거장 정통 (Clenow / Donchian-Seykota / AQR)
+# Phase H: 시스템 트레이딩 거장 정통 (Clenow / Donchian-Seykota / AQR + Bollinger / Elder)
 PHASE_H_STRATEGIES = [
     ClenowMomentum(), DonchianBreakout(), AQRTSMomentum(),
+    BollingerSqueeze(), ElderTripleScreen(),
 ]
 
-# 전체 전략 (총 40개)
+# 전체 전략 (총 28개 — 5년 strict 거래 발생 + 학술 검증)
 ALL_STRATEGIES = PHASE1_STRATEGIES + PHASE2_STRATEGIES + PHASE7_STRATEGIES + PHASE_H_STRATEGIES
 
 
