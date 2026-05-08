@@ -77,6 +77,8 @@ from scripts.screeners.holly_kr.strategies.donchian_breakout import DonchianBrea
 from scripts.screeners.holly_kr.strategies.aqr_tsmom import AQRTSMomentum
 from scripts.screeners.holly_kr.strategies.bollinger_squeeze import BollingerSqueeze
 from scripts.screeners.holly_kr.strategies.elder_triple_screen import ElderTripleScreen
+from scripts.screeners.holly_kr.strategies.turn_of_month import TurnOfMonth
+from scripts.screeners.holly_kr.strategies.adx_trend import ADXTrend
 
 # Phase G-6: 5년 strict에서 거래 0건인 14개 자체 패턴 비활성화
 # (Phase 1+2 자체 한국화 패턴 중 학술 검증 X). Strategy 파일은 보존 (향후 활성화 가능).
@@ -107,13 +109,14 @@ PHASE7_STRATEGIES = [
     VolumeDryUp(), BoxRangeWatch(),
 ]
 
-# Phase H: 시스템 트레이딩 거장 정통 (Clenow / Donchian-Seykota / AQR + Bollinger / Elder)
+# Phase H: 시스템 트레이딩 거장 정통 (Clenow / Donchian-Seykota / AQR + Bollinger / Elder + Calendar / Wilder ADX)
 PHASE_H_STRATEGIES = [
     ClenowMomentum(), DonchianBreakout(), AQRTSMomentum(),
     BollingerSqueeze(), ElderTripleScreen(),
+    TurnOfMonth(), ADXTrend(),
 ]
 
-# 전체 전략 (총 28개 — 5년 strict 거래 발생 + 학술 검증)
+# 전체 전략 (총 30개 — 5년 strict 거래 발생 + 학술 검증)
 ALL_STRATEGIES = PHASE1_STRATEGIES + PHASE2_STRATEGIES + PHASE7_STRATEGIES + PHASE_H_STRATEGIES
 
 

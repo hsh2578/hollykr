@@ -151,7 +151,7 @@ data/holly_kr/                   # Postmortem agent 누적 로그
 - close_to_a_cross: PF 1.13, S 0.39, MDD -54% (MDD 컷)
 - tailwind: PF 1.04, S 0.12 (Sharpe 컷, 4년 ALPHA였음)
 
-### Phase H 시스템 트레이딩 거장 정통 전략 (신규 5개, scanner.py PHASE_H_STRATEGIES)
+### Phase H 시스템 트레이딩 거장 정통 전략 (신규 7개, scanner.py PHASE_H_STRATEGIES)
 
 학술/실무 정통 구현, 5년 strict (3년 hold-out)에서 모두 ALPHA pool 미진입 (한국 시장 노이즈):
 
@@ -162,8 +162,10 @@ data/holly_kr/                   # Postmortem agent 누적 로그
 | `aqr_tsmom.py` | Moskowitz TSMOM | 0.83 | -0.27 |
 | `bollinger_squeeze.py` | Bollinger + Linda Raschke | 0.86 | -0.34 |
 | `elder_triple_screen.py` | Elder "Trading for a Living" | 0.50 | -2.21 |
+| `turn_of_month.py` | Lakonishok-Smidt + Ariel calendar effect | 0.82 | -0.56 |
+| `adx_trend.py` | Wilder ADX + Carver | 0.82 | -0.43 |
 
-**시사점**: 학술 검증된 정통 전략조차 5년 strict (3년 다양한 시장 환경) 한국 시장에선 통과 어려움. nightly_selector가 60일/180일 점수로 평가하여 최근 효과적이면 ACTIVE 선정 가능.
+**시사점**: 학술 검증된 정통 전략조차 5년 strict (3년 다양한 시장 환경) 한국 시장에선 통과 어려움. nightly_selector가 60일/180일 점수로 평가하여 최근 효과적이면 ACTIVE 선정 가능 (예: clenow_momentum, elder_triple_screen이 nightly Top 10 진입).
 
 ## Data Sources (글로벌 IP 호환)
 
