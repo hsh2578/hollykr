@@ -33,12 +33,13 @@ from scripts.screeners.holly_kr.output import print_signals, save_csv, save_json
 #   - ma_convergence:        2/4 PASS, PF 1.56 [CI 1.09~2.24]
 #   - new_high_52w_approach: 2/4 PASS, PF 1.84 [CI 0.79~3.67]
 #
-# STRONG/WATCH 분류는 텔레그램 표시용 fallback (nightly 결과 없을 때만 사용)
-WORKFLOW_PROVEN = ['wake_up_call', 'close_to_a_cross', 'box_range_watch']  # 진짜 ALPHA 3개
+# STRONG/WATCH 분류는 텔레그램 표시용 fallback (nightly 결과 + alpha_pool 모두 없을 때만 사용)
+# Phase F 갱신 2026-05-08: sample 1500 hold-out 검증 + MDD 정확 측정 후 ALPHA pool
+WORKFLOW_PROVEN = ['tailwind', 'close_to_a_cross', 'new_high_52w_approach']
 FALLBACK_STRONG = WORKFLOW_PROVEN
-FALLBACK_WATCH = ['ma_convergence', 'new_high_52w_approach',
-                  'weinstein_stage', 'darvas_box', 'volume_doesnt_lie',
-                  'tailwind', 'trend_play', 'quarterback', 'bullish_pullback', 'nice_chart']
+FALLBACK_WATCH = ['weinstein_stage', 'wake_up_call', 'quarterback',
+                  'box_range_watch', 'darvas_box', 'volume_doesnt_lie',
+                  'ma_convergence', 'volume_dry_up', 'bottom_breakout', 'nice_chart']
 
 # 호환성 유지 (legacy 코드용 — 실제 사용 X)
 STRONG_STRATEGIES = FALLBACK_STRONG

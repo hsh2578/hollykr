@@ -38,10 +38,13 @@ def _load_sector_returns_today() -> Optional[pd.DataFrame]:
     KIS sector 캐시 + 종목별 OHLCV로 섹터 평균 등락률 계산.
     """
     try:
-        from scripts.kis_sector_data import load_kis_sectors
-        sectors_df = load_kis_sectors()
-        if sectors_df is None or sectors_df.empty:
+        from scripts.kis_sector_data import load_sector_map
+        sector_map = load_sector_map()  # Dict[ticker, sector]
+        if not sector_map:
             return None
+        sectors_df = pd.DataFrame(
+            [{'Code': k, 'Sector': v} for k, v in sector_map.items()]
+        )
 
         from scripts.ohlcv_data import get_ohlcv
 
@@ -185,14 +188,11 @@ class ThemeAgent:
             return self.NEUTRAL
 
         if not sector:
-            # KIS sector에서 조회
+            # KIS sector 캐시에서 조회 (load_sector_map → Dict[ticker, sector])
             try:
-                from scripts.kis_sector_data import load_kis_sectors
-                sectors_df = load_kis_sectors()
-                if sectors_df is not None:
-                    row = sectors_df[sectors_df['Code'] == ticker]
-                    if not row.empty:
-                        sector = row.iloc[0].get('Sector', '')
+                from scripts.kis_sector_data import load_sector_map
+                sector_map = load_sector_map()
+                sector = sector_map.get(ticker, '')
             except Exception:
                 pass
 

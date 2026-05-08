@@ -32,6 +32,9 @@ python -m scripts.screeners.holly_kr.backtest --days 200 --sample 1000 --entry c
 python -m scripts.screeners.holly_kr.grid_search --strategy box_range_watch \
   --target-mults 4,5,6,7 --stop-mults 1.5,2,2.5 --csv
 
+# 분기 5년 종합 백테스트 (Phase F): walk-forward + Hold-out 1년 + ALPHA pool 자동 생성
+python -m scripts.screeners.holly_kr.backtest_5y --sample 1500 --workers 16
+
 # 데이터 수집·검증
 python -m scripts.investor_data              # 수급(KIS) 테스트
 python -m scripts.kis_sector_data --collect  # 전종목 섹터 수집 (7~10분)
@@ -47,9 +50,11 @@ scripts/screeners/holly_kr/      # HollyKR 본체
   run.py                         # CLI: --auto/--nightly/--proven/--strategy
   scanner.py                     # 전략 순회 + 수급 + 레짐 + 중복 제거
   backtest.py                    # 백테스트 엔진 + 워크포워드 + bootstrap CI
+  backtest_5y.py                 # Phase F 분기 5년 백테스트 + Hold-out 1년 + ALPHA pool
   grid_search.py                 # 전략 파라미터 그리드 서치 (Phase 8)
+  alpha_pool.py                  # Phase F ALPHA 풀 save/load (분기 5년 검증)
   signal_model.py                # Signal dataclass (target/stop/RR/사이즈/사유)
-  nightly_selector.py            # 60일 성과 평가 → Top N ACTIVE 선정
+  nightly_selector.py            # 듀얼 시간 척도 (60일+180일+5년 메타) Top N ACTIVE 선정
   active_strategies.py           # ACTIVE.json save/load
   exit_manager.py                # 실전 청산 (6단계 우선순위)
   survivorship_bias.py           # SURVIVORSHIP_BIAS_DISCOUNT = 0.75
@@ -63,6 +68,11 @@ scripts/screeners/holly_kr/      # HollyKR 본체
     market_filter.py             # 5단계 레짐 + Kill Switch
     theme_filter.py              # 테마주/작전주 제외
     dedup.py                     # 3+ 전략 동시 매수 시 신뢰도 부스트
+  agents/                        # Phase 10 룰 기반 4 에이전트 (LLM X)
+    macro_agent.py               # Yahoo Finance 매크로 (KS11/KQ11/KRW=X/GSPC/CL=F) + Kill Switch
+    theme_agent.py               # KIS 섹터 → 핫 테마 Top 3 + 알고픽 Top 3 발굴
+    risk_agent.py                # 종목별 위험 평가 (시총/거래대금/ATR/변동폭) → VETO or multiplier
+    postmortem_agent.py          # 매일 시그널 → 다음날 결과 추적 + 주간 금요일 리포트
 
 scripts/                         # 데이터 레이어
   ohlcv_data.py                  # FDR/Yahoo + 영구 캐시 .cache/ohlcv/
@@ -70,12 +80,19 @@ scripts/                         # 데이터 레이어
   kis_sector_data.py             # KIS bstp_kor_isnm
   kis_price.py                   # KIS 실시간 현재가
   fnguide_data.py                # FnGuide 재무 (Magic Formula/Piotroski용)
-  telegram_alert.py              # 강력/관심 + 현재가 + 사유 + 권장 포지션
+  telegram_alert.py              # 강력/관심 + 3-tier (ALPHA/CONSISTENT/단기적응) + 현재가 + 사유
+
+data/holly_kr/                   # Postmortem agent 누적 로그
+  signals_log.csv                # 매일 송출 시그널
+  trades_log.csv                 # 다음날 결과 추적
+  weekly_report.csv              # 주간 요약
+  alpha_pool.json                # Phase F 분기 5년 검증 ALPHA 풀
 
 .github/workflows/
   holly-nightly.yml              # 평일 19:00 KST — ACTIVE 갱신
   holly-daily.yml                # 평일 14:20 KST — ACTIVE 로드 → 스캔
-  holly-backtest.yml             # 평일 20:00 KST — 백테스트 (참고용)
+  holly-backtest.yml             # 평일 20:00 KST — 백테스트 (참고용, 수동만)
+  holly-quarterly.yml            # 분기 1일 17:00 UTC — 5년 백테스트 → ALPHA pool 갱신
 ```
 
 ## 37개 전략 구성
@@ -97,15 +114,35 @@ scripts/                         # 데이터 레이어
 
 **굵게 = Phase 7 신규 추가 (5개)**.
 
-### 워크포워드 검증된 ALPHA (PF 95% CI 하한 > 1.0)
+### 분기 5년 Hold-out 검증 ALPHA pool (`data/holly_kr/alpha_pool.json`)
 
-| 전략 | 누적 거래 | PF | 95% CI | 추정 실전 PF (×0.75) | 윈도우 |
-|---|---|---|---|---|---|
-| **box_range_watch** ⭐ | 203 | 2.27 | [1.65, 3.11] | 1.70 | 4/4 |
-| close_to_a_cross | 80 | 1.89 | [1.06, 3.22] | 1.42 | 3/4 |
-| wake_up_call | 330 | 1.55 | [1.17, 2.03] | 1.16 | 4/4 |
+마지막 갱신: 2026-05-08, sample 1500, MDD 정확 측정 후.
 
-`run.py::WORKFLOW_PROVEN`이 위 3개. ACTIVE.json 없을 때 fallback으로 사용.
+| 전략 | tier | Hold-out PF | Sharpe | 거래 | MDD | Calmar |
+|---|---|---|---|---|---|---|
+| **tailwind** ⭐ | ALPHA | 1.72 | 1.50 | 52 | -10.9% | 5.03 |
+| **new_high_52w_approach** | CONSISTENT | 1.36 | 0.89 | 79 | -24.3% | 2.97 |
+| **close_to_a_cross** | CONSISTENT | 1.26 | 0.71 | 240 | -40.6% | 3.92 |
+
+`nightly_selector` 듀얼 시간 척도가 이 풀 안에서만 평가. 풀 비어있으면 37개 전체로 fallback.
+
+### 분기 백테스트에서 boundary (PF≥1.0 but Sharpe<0.3 — 추가 강화 후보)
+
+- aqr_tsmom: PF 1.18, Sharpe 0.29 (Phase H 거장 신규, 0.01 차이로 컷)
+- clenow_momentum: PF 1.12, Sharpe 0.22 (Phase H, 거래 6914건)
+- weinstein_stage: PF 1.04, Sharpe 0.05
+- donchian_breakout: PF 1.02, Sharpe 0.05 (Phase H 거장 신규)
+- wake_up_call: PF 1.01, Sharpe 0.03
+- quarterback: PF 0.99, Sharpe -0.04
+- box_range_watch: PF 0.97, Sharpe -0.05 (이전 워크포워드 검증 ALPHA — sample 1500 + hold-out에서 boundary로 약화)
+
+### Phase H 시스템 트레이딩 거장 정통 전략 (신규 3개, scanner.py PHASE_H_STRATEGIES)
+
+학술/실무 정통 구현, 모두 PF≥1.0 양수 but Sharpe < 0.3로 ALPHA pool 미진입:
+
+- `clenow_momentum.py` — Andreas Clenow "Stocks on the Move": 90일 회귀 slope × R² + ATR 사이징
+- `donchian_breakout.py` — Donchian (1960s) + Ed Seykota (Market Wizards): 20일 신고가 + 200/50 SMA + 거래량
+- `aqr_tsmom.py` — Moskowitz 학술 + AQR: 12+6+3개월 수익률 sign + Stage 2 + 변동성 컷
 
 ## Data Sources (글로벌 IP 호환)
 
@@ -172,24 +209,52 @@ Weinstein/Minervini 통합 룰. 4 모두 충족:
 
 발동 시: 시그널 송출 동결 + 텔레그램 ⚠️ 경고 + "보유 손절 점검 권장".
 
-## 동적 ACTIVE 선정 (`nightly_selector.py`)
+## 동적 ACTIVE 선정 (`nightly_selector.py`) — 듀얼 시간 척도
 
-매일 19:00 KST 실행:
-1. 37개 전략 모두 60일 백테스트
-2. `composite_score = 0.25×WR + 0.30×PF_norm + 0.15×regime_weight + 0.30×sample_norm` 계산
-3. 거래 발생 전략 점수순 → **Top 10 ACTIVE**
-4. 부족하면 거래 없는 전략도 추가하여 min_active(5) 보장
-5. `.cache/active_strategies.json` 저장 → repo 커밋
+매일 19:00 KST 실행. 점수 = `0.4 × 60일 + 0.4 × 180일 + 0.2 × 5년 메타`:
+1. **ALPHA 풀** (`alpha_pool.json` 있으면): 풀 안 전략만 평가. 없으면 37개 전체.
+2. 60일 + 180일 백테스트 점수: `0.25×WR + 0.30×PF_norm + 0.15×regime + 0.30×sample`
+3. 5년 메타: 분기 5년 백테스트 tier (ALPHA=1.0, CONSISTENT=0.7) + holdout PF
+4. 합성 점수 Top N → **Top 10 ACTIVE** (`.cache/active_strategies.json`)
 
 Top 30% = STRONG, 나머지 = WATCH (텔레그램 표시용 동적 분류).
+
+## 분기 5년 백테스트 + ALPHA 풀 (Phase F)
+
+**개념**: 분기에 1번, 5년 데이터로 워크포워드 + Hold-out 1년 종합 평가 → 진짜 ALPHA만 ALPHA pool에 저장. 일별 nightly_selector는 이 풀 안에서만 듀얼 시간 척도로 평가.
+
+`backtest_5y.py` 흐름:
+1. 5년 OHLCV (LOOKBACK_DAYS=1500) + 시총 상위 1500 종목
+2. 학습 (3년) / Hold-out (1년 = 252거래일) 분리
+3. 학습 윈도우 (4 윈도우 × 90일 슬라이딩) 각각 평가 — **정보 출력용** (게이트 X)
+4. Hold-out 단독 평가로 tier 분류:
+   - **ALPHA**: PF≥1.5 + Sharpe≥1.0 + 거래≥30 + MDD>-50%
+   - **CONSISTENT**: PF≥1.0 + Sharpe≥0.3 + 거래≥15
+   - **WEAK_HOLDOUT**: 그 외 (저장 X)
+5. `data/holly_kr/alpha_pool.json` 자동 생성 → repo 커밋
+
+**핵심 설계 결정** (시행착오 결과):
+- 12 윈도우 × 9 그리드 평균 게이트 = 너무 빡빡 (검증 ALPHA도 탈락) → **단일 게이트**
+- `walk_forward_optimize` window_end 기준 = today (X) → **learn_end** (실제 데이터 끝)
+- 학습 게이트 (윈도우당 PF≥1.2 등) = 통계적 노이즈 → **제거** (Hold-out 단독)
+
+## Phase 10 — 4 Agents (룰 기반, LLM X)
+
+`run.py` 자동 모드에서 4개 agent 순차 실행 → 시그널 보정:
+
+1. **Macro Agent** (`agents/macro_agent.py`): Yahoo Finance KS11/KQ11/KRW=X/GSPC/CL=F → Kill Switch + buying climax 검증 → confidence_multiplier
+2. **Theme Agent** (`agents/theme_agent.py`): KIS 섹터 데이터 → 핫 테마 Top 3 + 콜드 테마 Top 3 → 종목 매칭 시 multiplier (HOT 1.30, WARM 1.15, COLD 0.70). 별도로 알고픽 Top 3 발굴.
+3. **Risk Agent** (`agents/risk_agent.py`): 종목별 시총/거래대금/ATR/5일 변동폭 평가 → risk_level≥0.85 시 VETO (시그널 폐기)
+4. **Postmortem Agent** (`agents/postmortem_agent.py`): 매일 nightly 직전 어제 시그널 → 오늘 결과 추적 (`signals_log.csv` → `trades_log.csv`). 매주 금요일 주간 리포트 텔레그램 송출.
 
 ## Schedule (GitHub Actions cron, 모두 KST 기준)
 
 | Workflow | Cron (UTC) | 실제 (KST) | 동작 |
 |---|---|---|---|
-| holly-nightly.yml | `0 9 * * 1-5` | ~19:00 | 37개 평가 → ACTIVE 갱신 → commit |
-| holly-daily.yml | `20 3 * * 1-5` | ~14:20 | ACTIVE 로드 → `--auto` 스캔 → 텔레그램 |
-| holly-backtest.yml | `0 11 * * 1-5` | ~20:00 | 백테스트 (참고용) |
+| holly-nightly.yml | `0 9 * * 1-5` | ~19:00 | 듀얼 시간 척도 평가 → ACTIVE 갱신 → commit |
+| holly-daily.yml | `20 3 * * 1-5` | ~14:20 | ACTIVE 로드 → `--auto` 스캔 (4 agents 적용) → 텔레그램 |
+| holly-backtest.yml | (수동 only) | — | 백테스트 (참고용, 자동 cron 폐기) |
+| holly-quarterly.yml | `0 17 30 3,6,9,12 *` | 분기 1일 새벽 | 5년 backtest_5y → alpha_pool.json 갱신 → commit |
 
 GitHub Actions cron은 SLA 없음 (피크타임 1-2시간 지연). 위 cron은 지연 보정용으로 앞당겨 설정됨.
 
@@ -197,7 +262,7 @@ GitHub Actions cron은 SLA 없음 (피크타임 1-2시간 지연). 위 cron은 �
 
 ```python
 MIN_MARKET_CAP = 1000             # 시총 1,000억 이상
-LOOKBACK_DAYS = 500               # OHLCV 조회 (200일 SMA 커버)
+LOOKBACK_DAYS = 1500              # OHLCV 5년 (분기 5년 백테스트 + 듀얼 60/180일 평가 커버)
 ROUND_TRIP_COST = 0.0021          # 매매수수료 0.03% + 거래세 0.18%
 TRAILING_STOP_PCT = 0.05          # 목표 도달 후 트레일링 5%
 PARTIAL_PROFIT_PCT = 0.5          # 목표 도달 시 50% 익절
@@ -265,8 +330,21 @@ python -c "import pickle; d=pickle.load(open('.cache/holly_universe_YYYY-MM-DD.p
 # ACTIVE 전략 확인
 cat .cache/active_strategies.json | python -m json.tool
 
+# ALPHA pool 확인 (분기 5년 백테스트 결과)
+cat data/holly_kr/alpha_pool.json | python -m json.tool
+
+# Postmortem 누적 로그
+cat data/holly_kr/signals_log.csv | tail -20
+cat data/holly_kr/trades_log.csv | tail -20
+
 # 시장 레짐 + Kill Switch 상태
 python -c "from scripts.screeners.holly_kr.filters.market_filter import get_market_regime; r=get_market_regime(); print('regime:', r['regime'], 'kill:', r['kill_switch'], r.get('kill_reasons',[]))"
+
+# 4 Agents 단독 테스트
+python -m scripts.screeners.holly_kr.agents.macro_agent
+python -m scripts.screeners.holly_kr.agents.theme_agent
+python -m scripts.screeners.holly_kr.agents.risk_agent
+python -m scripts.screeners.holly_kr.agents.postmortem_agent
 ```
 
 ## 과거 버그 (재발 주의)
@@ -276,6 +354,9 @@ python -c "from scripts.screeners.holly_kr.filters.market_filter import get_mark
 - **OHLCV 길이 시프트로 인한 비결정성**: 4주차 수정. `len(df)` 동적 → `scan_end = len(df) - day_offset` 시프트로 같은 백테스트가 다른 결과. `end_date` 고정으로 해결.
 - **Auto-extend target to RR**: 시도 후 롤백. 짧은 stop + 늘려진 target = 자주 손절 + 미도달 → PF<1. silent 전략은 silent 유지가 정답.
 - **target_pct=0 버그** (livermore_pivot, minervini_trend): RR 게이트가 자동 폐기. ATR-based target으로 수정됨.
+- **MDD 계산 버그**: `backtest.py:580` `cumulative = np.cumsum(pnls); drawdown = cumulative - peak`은 normalization 없이 PnL 단순 누적 → `MDD -1697%` 같은 비현실적 수치. 수정: `equity = 1 + cumsum(pnls); drawdown = (equity - peak) / peak; max(drawdown, -1.0)`. CONSISTENT 후보들이 MDD -50% 컷에 잘못 걸리는 원인이었음.
+- **backtest_5y.py KeyError 'holdout_min_pf'**: ALPHA_CRITERIA 단순화 (Hold-out 단독 평가) 후 `holdout_validate`의 `pass` 필드 계산이 deleted 키 참조. 6개 전략 ERROR로 평가 누락. ALPHA_CRITERIA에 legacy alias 추가로 해결.
+- **단순 룰 추가형 보완 vs 6요소 통합 재설계**: engulfing/snap_back_long/horseshoe_up에 (a) 50일 SMA + 거래량 보완 시도 → 큰 변화 X, (b) tailwind 패턴 (Stage 2 + multi-confirmation + ATR) 6요소 재설계 시도 → CONSISTENT 0개로 baseline 대비 후퇴. 두 방식 모두 git checkout 롤백. 교훈: **검증된 baseline 보존이 약한 전략 강화보다 우선**, 룰 변경은 단일 전략 sanity check 후 신중히.
 
 ## Known Limitations
 

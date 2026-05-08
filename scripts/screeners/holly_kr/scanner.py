@@ -69,6 +69,13 @@ from scripts.screeners.holly_kr.strategies.bottom_breakout import BottomBreakout
 from scripts.screeners.holly_kr.strategies.volume_dry_up import VolumeDryUp
 from scripts.screeners.holly_kr.strategies.box_range_watch import BoxRangeWatch
 
+# ============================================================================
+# Phase H 시스템 트레이딩 거장 정통 구현 (학술/실무 검증)
+# ============================================================================
+from scripts.screeners.holly_kr.strategies.clenow_momentum import ClenowMomentum
+from scripts.screeners.holly_kr.strategies.donchian_breakout import DonchianBreakout
+from scripts.screeners.holly_kr.strategies.aqr_tsmom import AQRTSMomentum
+
 # Phase 1: EOD 12개
 PHASE1_STRATEGIES = [
     PushingTheSpring(), Engulfing(), YesterdayHammer(), SnapBackLong(),
@@ -91,8 +98,13 @@ PHASE7_STRATEGIES = [
     VolumeDryUp(), BoxRangeWatch(),
 ]
 
-# 전체 전략 (총 37개)
-ALL_STRATEGIES = PHASE1_STRATEGIES + PHASE2_STRATEGIES + PHASE7_STRATEGIES
+# Phase H: 시스템 트레이딩 거장 정통 (Clenow / Donchian-Seykota / AQR)
+PHASE_H_STRATEGIES = [
+    ClenowMomentum(), DonchianBreakout(), AQRTSMomentum(),
+]
+
+# 전체 전략 (총 40개)
+ALL_STRATEGIES = PHASE1_STRATEGIES + PHASE2_STRATEGIES + PHASE7_STRATEGIES + PHASE_H_STRATEGIES
 
 
 _regime_info = None  # run_scanner에서 설정

@@ -64,6 +64,7 @@ class Trade:
     partial_exit_price: float = 0.0      # 50% 청산가 (목표가 도달 시점, 슬리피지 적용)
     max_close_during_hold: float = 0.0   # 보유 중 최고 종가 (트레일링용)
     trail_stop_price: float = 0.0        # 트레일링 스탑 가격
+    entry_atr: float = 0.0               # Phase G-2: Chandelier Exit용 (진입 시점 ATR)
 
 
 @dataclass
@@ -402,10 +403,21 @@ def _simulate_strategy(strategy, universe_ohlcv: Dict[str, pd.DataFrame],
                     active_trade = None
                     continue
 
-                # Phase C: 카테고리별 trailing 비율 (Build Alpha 연구)
-                trailing_pct = CATEGORY_TRAILING_PCT.get(
-                    active_trade.category, TRAILING_STOP_PCT
-                )
+                # Phase G-2: Chandelier Exit (LeBeau 정통, BTC 백테스트 검증 PF +26%)
+                # ATR×3 dynamic trailing — 종목 변동성 인식
+                # Fallback: Phase C 카테고리별 정적 % (entry_atr 0인 경우)
+                if (active_trade.entry_atr > 0
+                        and active_trade.max_close_during_hold > 0):
+                    chandelier_pct = (
+                        active_trade.entry_atr * 3.0
+                        / active_trade.max_close_during_hold
+                    )
+                    # 3%~20% 범위 cap (한국 시장 변동성 반영)
+                    trailing_pct = max(0.03, min(chandelier_pct, 0.20))
+                else:
+                    trailing_pct = CATEGORY_TRAILING_PCT.get(
+                        active_trade.category, TRAILING_STOP_PCT
+                    )
 
                 # ============================================================
                 # 우선순위 3: 목표가 도달 시 50% 익절 (한 번만)
@@ -509,6 +521,12 @@ def _simulate_strategy(strategy, universe_ohlcv: Dict[str, pd.DataFrame],
             if actual_entry <= 0:
                 continue
 
+            # Phase G-2: Chandelier Exit용 entry ATR 계산 (진입 시점 기준)
+            try:
+                entry_atr_val = strategy._calc_atr(df.iloc[:entry_idx + 1])
+            except Exception:
+                entry_atr_val = 0.0
+
             active_trade = Trade(
                 strategy=strategy.name,
                 category=strategy.category,  # Phase C: 카테고리별 청산용
@@ -520,6 +538,7 @@ def _simulate_strategy(strategy, universe_ohlcv: Dict[str, pd.DataFrame],
                 stop_loss_pct=sig.stop_loss_pct,
                 hold_days=0,
                 hold_days_max=sig.hold_days_max,
+                entry_atr=entry_atr_val,
             )
 
         # 기간 끝났는데 아직 열린 거래가 있으면 강제 청산  - 슬리피지 적용
@@ -576,11 +595,17 @@ def _calc_report(strategy, trades: List[Trade], period: str = '') -> StrategyRep
         # 진짜 알파: 95% CI 하한 > 1.0 (PF가 거의 확실히 1보다 큼)
         report.pf_significant = lo > 1.0
 
-    # MDD (누적 수익 기준, %)
-    cumulative = np.cumsum(pnls)
-    peak = np.maximum.accumulate(cumulative)
-    drawdown = cumulative - peak
+    # MDD (equity curve peak-to-trough %, 학술 표준)
+    # 이전 버그: cumsum - peak (normalization 없음, MDD -1697% 같은 비현실적 수치)
+    # 수정: equity = 1 + cumsum, drawdown = (equity - peak) / peak
+    equity = 1.0 + np.cumsum(pnls)
+    peak = np.maximum.accumulate(equity)
+    # peak가 0 이하면 0 division 방지 (자본 절멸 케이스)
+    safe_peak = np.where(peak > 0.001, peak, 0.001)
+    drawdown = (equity - peak) / safe_peak
     report.max_drawdown = float(np.min(drawdown)) if len(drawdown) > 0 else 0
+    # 자본 절멸 (equity ≤ 0) 케이스는 -1.0으로 capping
+    report.max_drawdown = max(report.max_drawdown, -1.0)
 
     # Sharpe (일간 수익률 기준, 연환산)
     if len(pnls) > 1 and np.std(pnls) > 0:
@@ -621,7 +646,7 @@ def _calc_report(strategy, trades: List[Trade], period: str = '') -> StrategyRep
             pnl_kurt = float(ks(pnls, fisher=False)) if len(pnls) > 3 else 3.0
             report.deflated_sharpe = deflated_sharpe_ratio(
                 sharpe=report.sharpe_ratio,
-                n_trials=37,  # HollyKR 전략 수
+                n_trials=40,  # HollyKR 전략 수 (37 + Phase H 거장 3)
                 skewness=pnl_skew,
                 kurtosis=pnl_kurt,
                 n_obs=len(pnls),
