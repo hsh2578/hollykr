@@ -220,13 +220,19 @@ Weinstein/Minervini 통합 룰. 4 모두 충족:
 
 발동 시: 시그널 송출 동결 + 텔레그램 ⚠️ 경고 + "보유 손절 점검 권장".
 
-## 동적 ACTIVE 선정 (`nightly_selector.py`) — 듀얼 시간 척도
+## 동적 ACTIVE 선정 (`nightly_selector.py`) — Phase G-5 하이브리드
 
-매일 19:00 KST 실행. 점수 = `0.4 × 60일 + 0.4 × 180일 + 0.2 × 5년 메타`:
-1. **ALPHA 풀** (`alpha_pool.json` 있으면): 풀 안 전략만 평가. 없으면 37개 전체.
-2. 60일 + 180일 백테스트 점수: `0.25×WR + 0.30×PF_norm + 0.15×regime + 0.30×sample`
-3. 5년 메타: 분기 5년 백테스트 tier (ALPHA=1.0, CONSISTENT=0.7) + holdout PF
-4. 합성 점수 Top N → **Top 10 ACTIVE** (`.cache/active_strategies.json`)
+매일 19:00 KST 실행. 점수 = `0.4 × 60일 + 0.4 × 180일 + 0.2 × 5년 메타`.
+
+**하이브리드 선정 로직** (사용자 의도: "ALPHA pool 고정 + 나머지 매일 평가"):
+1. **ALPHA 풀은 항상 ACTIVE** (5년 strict 검증된 자산 보존)
+   - 거래 0건이어도 포함 (분기 검증된 안전 자산)
+2. **풀 외 38개 매일 동적 평가** → 점수순 Top (max_active - pool 수)
+3. 합쳐 **Top 10 ACTIVE** (`.cache/active_strategies.json`)
+
+점수 구성:
+- 60일 + 180일 백테스트 점수: `0.25×WR + 0.30×PF_norm + 0.15×regime + 0.30×sample`
+- 5년 메타: 분기 5년 백테스트 tier (ALPHA=1.0, CONSISTENT=0.7) + holdout PF
 
 Top 30% = STRONG, 나머지 = WATCH (텔레그램 표시용 동적 분류).
 

@@ -281,15 +281,19 @@ def select_strategies_dual(
 
     regime = regime_info.get('regime', '횡보장')
 
-    # ALPHA 풀 확인 (있으면 풀 한정 평가)
+    # Phase G-5 하이브리드: ALPHA 풀 (보존) + 풀 외 (매일 동적 평가)
+    # 사용자 의도: "3개 고정 + 나머지 매일 60/180일 평가 후 추가"
     alpha_pool = load_alpha_pool()
     if alpha_pool:
         pool_names = {s['name'] for s in alpha_pool['alpha_strategies']}
-        eligible_strategies = [s for s in strategies if s.name in pool_names]
-        print(f"\n[야간 전략 선정 — 듀얼 시간 척도] 시장 레짐: {regime}")
-        print(f"  ALPHA 풀: {len(eligible_strategies)}개 (총 {len(strategies)}개 중)")
-        print(f"  평가: 60일 + 180일 + 5년 메타 가중합")
+        # 전체 평가하되 ALPHA 풀은 우선 보존
+        eligible_strategies = list(strategies)
+        print(f"\n[야간 전략 선정 — 하이브리드 듀얼 시간 척도] 시장 레짐: {regime}")
+        print(f"  ALPHA 풀 (항상 ACTIVE): {len(pool_names)}개 — {sorted(pool_names)}")
+        print(f"  풀 외 동적 평가: {len(eligible_strategies) - len(pool_names)}개")
+        print(f"  점수: 0.4×60일 + 0.4×180일 + 0.2×5년 메타")
     else:
+        pool_names = set()
         eligible_strategies = list(strategies)
         print(f"\n[야간 전략 선정 — 듀얼 시간 척도] 시장 레짐: {regime}")
         print(f"  ALPHA 풀 없음 → 전체 {len(eligible_strategies)}개 평가")
@@ -342,14 +346,26 @@ def select_strategies_dual(
               f"180일 PF={m_180.profit_factor:.2f} N={m_180.signal_count:2d} | "
               f"5년 {score_5y:.2f} | Score={composite:.3f}")
 
-    # Top N 선정 (점수 순)
+    # Phase G-5 하이브리드 선정:
+    # 1) ALPHA 풀은 항상 ACTIVE (보존 — 5년 검증된 자산)
+    # 2) 풀 외에서 점수순으로 max_active까지 채움
     rated = [m for m in all_metrics if m.signal_count > 0]
     rated.sort(key=lambda m: -m.composite_score)
-    selected_metrics = rated[:max_active]
 
-    # 부족 시 ALPHA 풀의 거래 0 전략도 추가
+    # 단계 1: ALPHA 풀 항상 포함 (거래 0건이라도 보존)
+    pool_metrics = [m for m in all_metrics if m.strategy_name in pool_names]
+    non_pool_metrics_rated = [m for m in rated if m.strategy_name not in pool_names]
+
+    selected_metrics = list(pool_metrics)  # ALPHA 풀 먼저
+    # 단계 2: 풀 외 점수순으로 채움
+    remaining = max_active - len(selected_metrics)
+    if remaining > 0:
+        selected_metrics.extend(non_pool_metrics_rated[:remaining])
+
+    # min_active 미달 시 풀 외 거래 0건 전략도 추가 (fallback)
     if len(selected_metrics) < min_active:
-        unrated = [m for m in all_metrics if m.signal_count == 0]
+        unrated = [m for m in all_metrics
+                   if m.signal_count == 0 and m.strategy_name not in pool_names]
         for m in unrated:
             if len(selected_metrics) >= min_active:
                 break
