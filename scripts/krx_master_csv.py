@@ -25,7 +25,36 @@ import pandas as pd
 
 # 프로젝트 루트 기준 (이 파일이 scripts/krx_master_csv.py)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CSV_PATH = PROJECT_ROOT / 'data' / 'holly_kr' / 'krx_master.csv'
+
+# CSV 경로 우선순위 (사용자 편의 — root에 종목코드.csv 매월 업데이트)
+# 1순위: 사용자 매월 업데이트하는 root 파일
+# 2순위: 자동 동기화된 백업 (data/holly_kr/krx_master.csv)
+CSV_PATH_USER = PROJECT_ROOT / '종목코드.csv'
+CSV_PATH_BACKUP = PROJECT_ROOT / 'data' / 'holly_kr' / 'krx_master.csv'
+
+
+def _resolve_csv_path() -> Optional[Path]:
+    """우선순위에 따라 CSV 파일 경로 결정 + 자동 백업 동기화."""
+    if CSV_PATH_USER.exists():
+        # 사용자 파일을 백업 위치에도 동기화 (mtime 비교)
+        try:
+            need_sync = (
+                not CSV_PATH_BACKUP.exists()
+                or CSV_PATH_USER.stat().st_mtime > CSV_PATH_BACKUP.stat().st_mtime
+            )
+            if need_sync:
+                CSV_PATH_BACKUP.parent.mkdir(parents=True, exist_ok=True)
+                import shutil
+                shutil.copy2(CSV_PATH_USER, CSV_PATH_BACKUP)
+        except Exception:
+            pass
+        return CSV_PATH_USER
+    if CSV_PATH_BACKUP.exists():
+        return CSV_PATH_BACKUP
+    return None
+
+
+CSV_PATH = _resolve_csv_path()
 
 # 캐시 (메모리)
 _master_cache: Optional[pd.DataFrame] = None
@@ -43,11 +72,12 @@ def load_krx_master(use_cache: bool = True) -> Optional[pd.DataFrame]:
     if use_cache and _master_cache is not None:
         return _master_cache
 
-    if not CSV_PATH.exists():
+    csv_path = _resolve_csv_path()  # 매번 재확인 (사용자 root 업데이트 즉시 반영)
+    if csv_path is None or not csv_path.exists():
         return None
 
     try:
-        df = pd.read_csv(CSV_PATH, encoding='cp949', dtype={'단축코드': str})
+        df = pd.read_csv(csv_path, encoding='cp949', dtype={'단축코드': str})
     except Exception as e:
         print(f"  [KRX CSV 로드 실패] {e}")
         return None
