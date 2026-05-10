@@ -1,0 +1,209 @@
+{
+  "date": "2026-05-10",
+  "generated_at": "2026-05-10 21:30:00",
+  "system_version": "Phase G-9",
+  "data_source": "OHLCV 마지막 거래일 2026-05-08 (금요일 종가)",
+
+  "market_environment": {
+    "regime": "상승장_고변동",
+    "kospi_volatility_pct": 38,
+    "kill_switch_threshold": 35,
+    "kill_switch_status": "임박 (35% 초과)",
+    "ma200_premium_pct": 67,
+    "buying_climax_warning": true,
+    "recommended_equity_ratio": 0.25,
+    "recommended_cash_ratio": 0.75
+  },
+
+  "active_strategies": [
+    {"name": "ma_convergence", "tier": "ALPHA pool (5년 strict)", "category": "trend_following"},
+    {"name": "new_high_52w_approach", "tier": "ALPHA pool (5년 strict)", "category": "breakout"},
+    {"name": "clenow_momentum", "tier": "시장 적응 Top 3", "category": "trend_following"},
+    {"name": "bottom_breakout", "tier": "시장 적응 Top 3", "category": "mean_reversion"},
+    {"name": "tailwind", "tier": "시장 적응 Top 3", "category": "trend_following"}
+  ],
+
+  "signal_count": 31,
+  "signal_distribution": {
+    "clenow_momentum": 20,
+    "bottom_breakout": 8,
+    "ma_convergence": 3
+  },
+  "cutoff_rule": "전략당 Top 20 (ALPHA pool 면제). Top 10 분산 5 cap (부서장 단계)",
+
+  "top10": [
+    {
+      "rank": 1,
+      "is_best_pick": true,
+      "ticker": "141080",
+      "name": "리가켐바이오",
+      "strategy": "ma_convergence",
+      "strategy_tier": "★ ALPHA pool (5년 strict 검증)",
+      "decision": "BUY MED",
+      "weight_pct": 12,
+      "entry": "다음날 시초가 (음봉 회피)",
+      "entry_price": 190800,
+      "target_price": 238500,
+      "target_pct": 25.0,
+      "stop_price": 175536,
+      "stop_pct": -8.0,
+      "hold_days": 30,
+      "special_exit": "200일 SMA 하향 시 즉시 청산",
+      "sub_agent_decision": "HOLD",
+      "orchestrator_override": "BUY 격상 (ALPHA pool 가산)",
+      "reasoning": "31개 시그널 중 유일한 ALPHA pool. ADC 플랫폼 + 빅파마 7조원 기술이전. 바이오는 KOSPI 베타 낮아 panic 헤지 효과."
+    },
+    {
+      "rank": 2,
+      "ticker": "039200",
+      "name": "오스코텍",
+      "strategy": "ma_convergence",
+      "strategy_tier": "★ ALPHA pool",
+      "decision": "BUY LOW",
+      "weight_pct": 5,
+      "entry": "당일 종가",
+      "entry_price": 51400,
+      "target_price": 64250,
+      "target_pct": 25.0,
+      "stop_price": 48158,
+      "stop_pct": -6.3,
+      "hold_days": 30,
+      "special_exit": "200일 SMA 하향 시 즉시 청산",
+      "sub_agent_decision": "HOLD",
+      "orchestrator_override": "BUY 격상 (ALPHA pool, 단 catalyst 약 → 비중 축소)",
+      "reasoning": "레이저티닙 로열티 흑전 + ALPHA pool. 창업주 사망 후 지분 매각 우려 → 비중 1순위의 절반"
+    },
+    {
+      "rank": 3,
+      "ticker": "272210",
+      "name": "한화시스템",
+      "strategy": "clenow_momentum",
+      "strategy_tier": "시장 적응",
+      "decision": "BUY MED",
+      "weight_pct": 8,
+      "entry": "당일 종가",
+      "target_pct": 24.0,
+      "stop_pct": -8.0,
+      "hold_days": 60,
+      "special_exit": "100일 SMA 하향 시 즉시 청산 (Clenow rule)",
+      "sub_agent_decision": "BUY",
+      "orchestrator_override": "BUY 동의 (실적 +79% 펀더 강함)",
+      "reasoning": "31개 clenow 중 유일하게 펀더 뒷받침. 영업이익 +79% YoY + DJ BIC 외인 패시브 + 방산 헤지"
+    },
+    {
+      "rank": 4,
+      "ticker": "005930",
+      "name": "삼성전자",
+      "strategy": "clenow_momentum",
+      "decision": "HOLD",
+      "weight_pct": 0,
+      "sub_agent_decision": "BUY MED",
+      "orchestrator_override": "HOLD 강등 (+12.69% 갭업 직후)",
+      "reasoning": "1Q26 실적 강하나 chasing 위험 + Kill Switch 외인 1순위 매도",
+      "wait_condition": "-5~7% 눌림 후 재평가"
+    },
+    {
+      "rank": 5,
+      "ticker": "000660",
+      "name": "SK하이닉스",
+      "strategy": "clenow_momentum",
+      "decision": "HOLD",
+      "weight_pct": 0,
+      "sub_agent_decision": "BUY MED",
+      "orchestrator_override": "HOLD 강등 (Kill Switch 위험)",
+      "reasoning": "HBM 호재 2년째 반영 + 외인 매도 1순위"
+    },
+    {
+      "rank": 6,
+      "ticker": "066570",
+      "name": "LG전자",
+      "strategy": "clenow_momentum",
+      "decision": "HOLD-WATCH",
+      "weight_pct": 0,
+      "reasoning": "PBR 0.8 저평가 but VS(전장) 흑전 지연 — 5년째 같은 가격"
+    },
+    {
+      "rank": 7,
+      "ticker": "035810",
+      "name": "이지홀딩스",
+      "strategy": "bottom_breakout",
+      "decision": "HOLD-WATCH",
+      "weight_pct": 0,
+      "reasoning": "PBR 0.51 극단 저평가 but ROE 3.83% 약함"
+    },
+    {
+      "rank": 8,
+      "ticker": "377300",
+      "name": "카카오페이",
+      "strategy": "bottom_breakout",
+      "decision": "HOLD",
+      "weight_pct": 0,
+      "reasoning": "1Q +631% but PER 55-70배 부담 + 카카오 그룹 리스크"
+    },
+    {
+      "rank": 9,
+      "ticker": "180640",
+      "name": "한진칼",
+      "strategy": "bottom_breakout",
+      "decision": "HOLD",
+      "weight_pct": 0,
+      "reasoning": "지주사 PBR 2.30 vs 자회사 대한항공 PBR 0.83 — 경영권 프리미엄 비정상"
+    },
+    {
+      "rank": 10,
+      "decision": "VACANT (의도적 공석)",
+      "reason": "나머지 후보 모두 단기 +30~99% 급등 직후. 강제로 채우는 것보다 현금 보유가 더 안전."
+    }
+  ],
+
+  "avoid_list": [
+    {"ticker": "317830", "name": "에스피시스템스", "reason": "거래대금 14억 + 영업적자"},
+    {"ticker": "029530", "name": "신도리코", "reason": "거래대금 8억 + 본업 -15% 역성장"},
+    {"ticker": "223250", "name": "드림씨아이에스", "reason": "+27% 갭업 추격 + 중국 모회사"},
+    {"ticker": "014280", "name": "금강공업", "reason": "영업이익 -68% + 유동비율 95.7% + 담보대출"},
+    {"ticker": "489500", "name": "엘케이켐", "reason": "1주일 -45% + 1Q26 -37% + RR 1.6 미달"},
+    {"ticker": "095570", "name": "AJ네트웍스", "reason": "ALPHA pool인데 신뢰도 LOW + 거래대금 14억"},
+    {"ticker": "000150", "name": "두산", "reason": "PER 370배 + 426% 급등 (buying climax)", "orchestrator_override": "sub HOLD → AVOID 격상"},
+    {"ticker": "000720", "name": "현대건설", "reason": "52주 저가 +394% + RR 0.5 미달", "orchestrator_override": "sub HOLD → AVOID 격상"},
+    {"ticker": "298040", "name": "효성중공업", "reason": "437만원/주 정확 비중 진입 어려움", "orchestrator_override": "sub HOLD → AVOID 격상"}
+  ],
+
+  "portfolio_construction": {
+    "total_buy_count": 3,
+    "total_capital_exposure_pct": 25,
+    "cash_reserve_pct": 75,
+    "strategy_distribution": {
+      "ma_convergence": 2,
+      "clenow_momentum": 4,
+      "bottom_breakout": 3
+    },
+    "5_cap_compliance": true,
+    "examples_by_capital": {
+      "100_million": {"리가켐": 12000000, "한화시스템": 8000000, "오스코텍": 5000000, "cash": 75000000},
+      "50_million": {"리가켐": 6000000, "한화시스템": 4000000, "오스코텍": 2500000, "cash": 37500000},
+      "10_million": {"리가켐": 1200000, "한화시스템": 800000, "오스코텍": 500000, "cash": 7500000}
+    }
+  },
+
+  "exit_triggers": {
+    "per_stock": [
+      "갭다운 → 시초가 청산",
+      "종가 < 손절가 → 손절가 청산",
+      "종가 ≥ 목표가 → 50% 익절 + 트레일링 5%",
+      "진입 다음날 종가 -3% → 다음날 시가 청산",
+      "시간 청산 (전략별 hold_days_max)"
+    ],
+    "per_strategy": {
+      "ma_convergence": "200일 SMA 하향 시 즉시 청산",
+      "clenow_momentum": "100일 SMA 하향 시 즉시 청산",
+      "bottom_breakout": "박스 하단 이탈 시 즉시 청산"
+    },
+    "portfolio_wide": [
+      "KOSPI 5일 누적 ≤ -5% → 모두 손절",
+      "변동성 ≥ 40% → 모두 손절",
+      "외인 -1조원/일 → 신규 매수 보류"
+    ]
+  },
+
+  "orchestrator_message": "31개 시그널 중 진짜 BUY는 3개. ALPHA pool 1개(리가켐)에 최대 가중치, clenow 20개 중 19개 거부. Kill Switch 임박 — 자본 노출 25%로 보수. 현금 75% 보유는 underperform이 아니라 다음 panic bottom의 실탄이다. Sub-agent 31명 중 7명만 동의 + 3명 격상 = 부서장 독립 판단."
+}

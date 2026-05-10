@@ -6,13 +6,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 HollyKR — Trade Ideas Holly AI의 한국 시장 적응 버전. 매일 KOSPI/KOSDAQ 시총 1,000억+ 종목을 30개 전략으로 스캔, 텔레그램으로 시그널 송출. **자동매매 X**, 사용자가 시그널 보고 직접 매수/매도 판단.
 
-핵심 컨셉 (Phase G-7 시장 적응):
+핵심 컨셉 (Phase G-9 — 최종 시스템):
 1. **분기 5년 strict 검증 ALPHA pool** (현재 2개: ma_convergence + new_high_52w_approach) — 항상 ACTIVE 보존 (장기 안전 자산)
 2. **매일 60일 강조 평가 (0.5/0.3/0.2)** — 풀 외 28개에서 시장 적응 Top 3 선정 → 합쳐 **ACTIVE 5개**
    - 강세장 → trend_following 60일 PF↑ → 자동 진입
    - 약세장 → mean_reversion 60일 PF↑ → 자동 진입
    - 횡보장 → range/pullback 60일 PF↑ → 자동 진입
-3. **매일 14:20 daily-scan** — ACTIVE 5개로 시그널 발생 (몇 개든 자연 발생) → 텔레그램
+3. **매일 14:20 daily-scan** — ACTIVE 5개로 시그널 발생 (몇 개든 자연 발생)
+4. **전략별 cutoff 통일**: 모든 전략 Top 20 (ALPHA pool 면제 — 5년 검증 자산 보존)
+5. **Sub-agent (stock-analyst) 모든 시그널 평가** — cutoff X (cutoff는 Top 20 안에서)
+6. **부서장 (investment-orchestrator) 최종 결정** — Top 10 정렬 + 전략당 5 cap 강제 (분산)
+
+## ⚠️ 사용자 명시 룰 (반복 실수 방지 — 절대 준수)
+
+1. **4 룰 에이전트 (Macro/Theme/Risk/Postmortem) 완전 제거**
+   - run.py에서 호출 X (단순화 X, 완전 제거)
+2. **시그널 cutoff = 전략당 20** (clenow 등 강제 컷)
+   - ALPHA pool은 cut 면제 (alpha_pool.json 동적 로드)
+   - 거래대금 cut 절대 X (사용자 명시 — 표시만 OK)
+3. **Sub-agent는 모든 시그널 평가** (cutoff X)
+   - Top 5/10으로 미리 자르지 X
+4. **Top 10 분산은 부서장 단계** — 전략당 ≤5 강제 (사용자 명시)
+   - clenow 20개 발생해도 Top 10에는 최대 5개
+5. **부서장 = 의사결정자** (sub-agent와 다른 결정 가능)
+   - 자산운용사 CIO 역할 — 포트폴리오 관점
+6. **공석 허용** — 강제로 Top 10 채우지 X
+7. **종목코드 KRX CSV 필수** (data/holly_kr/krx_master.csv)
+   - universe.py가 자동 검증 (ETF/우선주/SPAC/REIT 자동 제외)
+8. **텔레그램 양식 = CIO 보고서** (.claude/agents/investment-orchestrator.md 단계 5 명시)
+   - 메시지 1: 시장 진단 + 전략 소개 + 매수 추천 + 자본별 금액 + 매도 룰 + 회피 + 부서장 의견
+   - 메시지 2: Top 10 전체 (각 종목 전략 + 한 줄 사유)
 
 ## Run Commands
 
