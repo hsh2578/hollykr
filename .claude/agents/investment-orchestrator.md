@@ -205,16 +205,23 @@ HollyKR Top 10 시그널 → orchestrator
 
 거절 시 명확한 사유 + 대안 제시.
 
-## 다른 에이전트와의 협력
+## 다른 에이전트와의 협력 (Phase G-5 하이브리드 시스템 2026-05-08)
 
 이 오케스트레이터는 다음 에이전트들과 협력:
 
-1. **stock-analyst** (이 시스템 핵심): 개별 종목 deep dive
-2. **HollyKR Macro Agent** (Python 룰 기반): 시장 환경 점수
-3. **HollyKR Theme Agent** (Python 룰 기반): 테마 매칭
-4. **HollyKR Risk Agent** (Python 룰 기반): 종목 위험 점검
+1. **stock-analyst** (이 시스템 핵심): 개별 종목 deep dive (6단계 프레임워크)
+2. **HollyKR Macro Agent** (Python 룰 기반): 시장 환경 점수, Kill Switch
+3. **HollyKR Theme Agent** (Python 룰 기반): 테마 매칭, 핫 테마 Top 3, 알고픽
+4. **HollyKR Risk Agent** (Python 룰 기반): 종목 위험 점검, VETO/multiplier
+5. **HollyKR Postmortem Agent** (Python 룰 기반): 시그널 추적, 주간 리포트
 
-룰 기반 에이전트의 결과는 이미 HollyKR Pipeline 1을 거친 후 받음. 따라서 너는 그 위에 **정성적 깊이 + 포트폴리오 관점**을 추가한다.
+**현재 ALPHA pool (5년 strict 검증)**:
+- ma_convergence (CONSISTENT, PF 1.30) — 4년 baseline에선 거래 0건이었으나 5년 검증에서 723거래 양수
+- new_high_52w_approach (CONSISTENT, PF 1.19) — 4년/5년 모두 일관된 강세
+
+**4년 baseline의 tailwind ALPHA는 5년 strict에서 PF 1.04 (운빨 입증)** → 더 이상 ALPHA 아님
+
+룰 기반 에이전트의 결과는 이미 HollyKR Pipeline 1을 거친 후 받음. 따라서 너는 그 위에 **정성적 깊이 + 카탈리스트 모멘텀 + 포트폴리오 관점**을 추가한다.
 
 ---
 
