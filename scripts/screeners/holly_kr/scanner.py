@@ -65,6 +65,8 @@ from scripts.screeners.holly_kr.strategies.neo_pullback import NeoPullback
 # ============================================================================
 from scripts.screeners.holly_kr.strategies.ma_convergence import MAConvergence
 from scripts.screeners.holly_kr.strategies.new_high_52w_approach import NewHigh52wApproach
+# Phase G-9: new_high_52w_breakout 5년 strict 부진 (PF<1) → 비활성화
+# (파일 보존, scanner 제외)
 from scripts.screeners.holly_kr.strategies.bottom_breakout import BottomBreakout
 from scripts.screeners.holly_kr.strategies.volume_dry_up import VolumeDryUp
 from scripts.screeners.holly_kr.strategies.box_range_watch import BoxRangeWatch
