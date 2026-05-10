@@ -196,24 +196,30 @@ def main():
         dynamic_strong = set(FALLBACK_STRONG)
         dynamic_watch = set(FALLBACK_WATCH)
 
-    # Phase G-9 Hard Cut #1: 거래대금 30억 미만 자동 제외 (슬리피지 위험)
-    # 사용자 결정: 실전 매수 가능선 = 30억 (그 미만 = 호가 영향 ↑)
-    MIN_DAILY_VALUE_EOK = 30
-    before = len(signals)
-    signals = [s for s in signals if getattr(s, 'daily_value_eok', 0) >= MIN_DAILY_VALUE_EOK]
-    if before > len(signals):
-        print(f"  [거래대금 컷] {MIN_DAILY_VALUE_EOK}억 미만 {before - len(signals)}개 제외 → {len(signals)}개")
-
-    # Phase G-9 Hard Cut #2: 전략별 시그널 Top N cutoff
+    # Phase G-9: 전략별 시그널 Top N cutoff (사용자 명시 단순 룰)
     # - clenow_momentum: Top 10 (사용자 명시 — 너무 헐렁함)
     # - 기타: Top 40 (40개 이상 추천 = 신뢰도 ↓, 사용자 정확)
+    # - ALPHA pool (5년 strict 검증): cut 면제 (가장 신뢰)
+    # ※ 거래대금은 표시만 (cut X) — 사용자가 직접 판단
     SPECIFIC_STRATEGY_CAP = {
         'clenow_momentum': 10,
     }
     DEFAULT_STRATEGY_CAP = 40
+    # ALPHA pool 동적 로드 (alpha_pool.json) — 갱신 시 자동 반영
+    try:
+        from scripts.screeners.holly_kr.alpha_pool import load_alpha_pool
+        _pool = load_alpha_pool()
+        EXEMPT_FROM_CAP = {s['name'] for s in _pool['alpha_strategies']} if _pool else set()
+    except Exception:
+        EXEMPT_FROM_CAP = set()
+    if EXEMPT_FROM_CAP:
+        print(f"  [ALPHA pool 면제] cut 미적용: {sorted(EXEMPT_FROM_CAP)}")
+
     from collections import Counter
     strategy_counts = Counter(s.strategy_name for s in signals)
     for strategy_name, n in strategy_counts.items():
+        if strategy_name in EXEMPT_FROM_CAP:
+            continue  # ALPHA pool 면제
         max_n = SPECIFIC_STRATEGY_CAP.get(strategy_name, DEFAULT_STRATEGY_CAP)
         if n > max_n:
             strat_sigs = sorted(
