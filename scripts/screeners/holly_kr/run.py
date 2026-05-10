@@ -196,15 +196,11 @@ def main():
         dynamic_strong = set(FALLBACK_STRONG)
         dynamic_watch = set(FALLBACK_WATCH)
 
-    # Phase G-9: 전략별 시그널 Top N cutoff (사용자 명시 단순 룰)
-    # - clenow_momentum: Top 10 (사용자 명시 — 너무 헐렁함)
-    # - 기타: Top 40 (40개 이상 추천 = 신뢰도 ↓, 사용자 정확)
+    # Phase G-9: 전략별 시그널 Top N cutoff (단순 룰 통일)
+    # - 모든 전략: 20개 이상이면 Top 20 (사용자 명시 통일)
     # - ALPHA pool (5년 strict 검증): cut 면제 (가장 신뢰)
     # ※ 거래대금은 표시만 (cut X) — 사용자가 직접 판단
-    SPECIFIC_STRATEGY_CAP = {
-        'clenow_momentum': 10,
-    }
-    DEFAULT_STRATEGY_CAP = 40
+    DEFAULT_STRATEGY_CAP = 20
     # ALPHA pool 동적 로드 (alpha_pool.json) — 갱신 시 자동 반영
     try:
         from scripts.screeners.holly_kr.alpha_pool import load_alpha_pool
@@ -220,17 +216,16 @@ def main():
     for strategy_name, n in strategy_counts.items():
         if strategy_name in EXEMPT_FROM_CAP:
             continue  # ALPHA pool 면제
-        max_n = SPECIFIC_STRATEGY_CAP.get(strategy_name, DEFAULT_STRATEGY_CAP)
-        if n > max_n:
+        if n > DEFAULT_STRATEGY_CAP:
             strat_sigs = sorted(
                 [s for s in signals if s.strategy_name == strategy_name],
                 key=lambda s: -s.confidence,
             )
-            keep_tickers = set(s.ticker for s in strat_sigs[:max_n])
-            removed = n - max_n
+            keep_tickers = set(s.ticker for s in strat_sigs[:DEFAULT_STRATEGY_CAP])
+            removed = n - DEFAULT_STRATEGY_CAP
             signals = [s for s in signals
                        if s.strategy_name != strategy_name or s.ticker in keep_tickers]
-            print(f"  [{strategy_name}] {n}개 → Top {max_n} ({removed}개 제거)")
+            print(f"  [{strategy_name}] {n}개 → Top {DEFAULT_STRATEGY_CAP} ({removed}개 제거)")
 
     # 신뢰도 정렬만 (전체 시그널 cutoff X — sub-agent 평가용)
     signals.sort(key=lambda s: -s.confidence)

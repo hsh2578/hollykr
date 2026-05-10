@@ -52,9 +52,36 @@ def get_universe(use_cache: bool = True) -> pd.DataFrame:
             with open(cache_file, 'rb') as f:
                 cached = pickle.load(f)
             if cached is not None and len(cached) > 0:
-                print(f"\n[유니버스 캐시 로드] {cache_file.name} ({len(cached)}개 종목)")
-                return cached
-        except Exception:
+                # Phase G-9: KRX 공식 마스터 CSV로 종목코드 100% 정확 검증
+                # ETF/ETN/우선주/REIT/SPAC 모두 자동 제외 (CSV에 보통주만)
+                try:
+                    from scripts.krx_master_csv import filter_to_krx_master, get_code_to_name
+                    before = len(cached)
+                    if 'Code' in cached.columns:
+                        # 1. KRX 공식 보통주만 필터 (ETF/우선주/SPAC/REIT 자동 제외)
+                        cached = filter_to_krx_master(cached, code_col='Code')
+                        # 2. 종목코드 ↔ 종목명 매핑 정확화 (네이버 데이터 종목명 잘못된 경우)
+                        if 'Name' in cached.columns:
+                            code_to_name = get_code_to_name()
+                            cached['Name'] = cached['Code'].astype(str).str.zfill(6).map(code_to_name).fillna(cached['Name'])
+                    if before > len(cached):
+                        print(f"\n[유니버스 캐시 로드 + KRX CSV 검증] {cache_file.name}")
+                        print(f"  원본 {before}개 → KRX 보통주만 {len(cached)}개 (ETF/우선주/특수 제외)")
+                    else:
+                        print(f"\n[유니버스 캐시 로드 + KRX 검증] {cache_file.name} ({len(cached)}개)")
+                except Exception as e:
+                    # KRX CSV 없으면 기존 fallback (정규식)
+                    from scripts.krx_data import ETF_PATTERN
+                    before = len(cached)
+                    if 'Name' in cached.columns:
+                        is_etf = cached['Name'].apply(lambda x: bool(ETF_PATTERN.search(str(x))))
+                        cached = cached[~is_etf].copy()
+                    if 'Code' in cached.columns:
+                        cached = cached[cached['Code'].astype(str).str.endswith('0')].copy()
+                    print(f"\n[유니버스 캐시 + 정규식 필터 fallback] {cache_file.name} ({len(cached)}개) [KRX CSV: {e}]")
+                return cached.reset_index(drop=True)
+        except Exception as e:
+            print(f"  캐시 로드 오류: {e}")
             pass
 
     print("\n[유니버스 필터링]")
