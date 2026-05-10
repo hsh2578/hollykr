@@ -47,7 +47,7 @@ WEIGHT_5Y = 0.20    # 5년 메타데이터 (ALPHA 풀 보너스)
 
 @dataclass
 class StrategyMetrics:
-    """전략별 백테스트 성과 지표."""
+    """전략별 백테스트 성과 지표 (Phase G-8: BRAIN + López de Prado 통합)."""
     strategy_name: str
     category: str
     win_rate: float = 0.0
@@ -59,6 +59,15 @@ class StrategyMetrics:
     composite_score: float = 0.0
     passed: bool = False
     sub_period_passes: int = 0  # 히스테리시스: 통과한 서브기간 수 (0~3)
+    # Phase G-8 신규 지표
+    sortino: float = 0.0          # Downside-only Sharpe (진짜 위험 측정)
+    calmar: float = 0.0           # CAGR / |MDD| (수익/낙폭)
+    fitness: float = 0.0          # BRAIN: Sharpe × √(|R|/MDD)
+    expectancy_pct: float = 0.0   # 거래당 기대값 (%)
+    margin_bps: float = 0.0       # 거래당 평균 수익 (bps, 수수료 후)
+    max_drawdown: float = 0.0     # MDD (음수)
+    turnover_health: float = 0.0  # 회전율 적정성 (0~1)
+    sharpe: float = 0.0           # 기존 Sharpe (참고)
 
 
 def _simulate_signals_on_history(
@@ -160,12 +169,12 @@ def _calc_metrics(
     trades: List[Dict],
     regime_weight: float,
     sub_period_passes: int = 0,
+    lookback_days: int = 60,
 ) -> StrategyMetrics:
-    """거래 결과로부터 성과 지표 계산.
+    """거래 결과로부터 성과 지표 계산 (Phase G-8: BRAIN + López de Prado).
 
-    Args:
-        sub_period_passes: 히스테리시스 - 3개 서브기간 중 통과한 수.
-            HYSTERESIS_MIN_PERIODS(2) 이상이어야 최종 passed=True.
+    탈락 기준 X — 모든 전략 점수만으로 순위 (사용자 요청).
+    BRAIN Fitness 정확 공식: Sharpe × √(|R| / max(Turnover, 0.125))
     """
     metrics = StrategyMetrics(
         strategy_name=strategy.name,
@@ -178,6 +187,7 @@ def _calc_metrics(
         return metrics
 
     metrics.signal_count = len(trades)
+    pnls = np.array([t['pnl'] for t in trades])
 
     wins = [t for t in trades if t['win']]
     losses = [t for t in trades if not t['win']]
@@ -191,28 +201,90 @@ def _calc_metrics(
     metrics.avg_rr_ratio = np.mean([t['rr_ratio'] for t in trades]) if trades else 0.0
     metrics.total_return = sum(t['pnl'] for t in trades)
 
-    # 최소 기준 통과 여부: PF 1.1+ AND 총수익 10%+
-    base_passed = (
-        metrics.profit_factor >= MIN_PROFIT_FACTOR
-        and metrics.total_return >= MIN_TOTAL_RETURN
-        and metrics.signal_count >= 1
-    )
+    # ===== Phase G-8 신규 지표 (BRAIN + López de Prado) =====
 
-    # 히스테리시스: 서브기간 최소 2/3 통과해야 활성화
-    metrics.passed = base_passed and (sub_period_passes >= HYSTERESIS_MIN_PERIODS)
+    # 1. Sharpe (참고용 — 정상 분포 가정)
+    pnl_std = float(np.std(pnls)) if len(pnls) > 1 else 0.0001
+    pnl_mean = float(np.mean(pnls))
+    metrics.sharpe = (pnl_mean / pnl_std) * np.sqrt(252) if pnl_std > 0 else 0.0
 
-    # 복합 점수 (Phase 5 강화: 표본 크기 가중 ↑, 워크포워드 결과 반영)
-    # 핵심: PF × sqrt(거래수) × 승률 보정 — 통계적으로 의미있는 전략 우선
-    norm_wr = metrics.win_rate  # 0~1
-    norm_pf = min(metrics.profit_factor, 3.0) / 3.0  # 0~1 (3 이상은 캡)
-    norm_rw = metrics.regime_weight  # 0.4~1.3 → 그대로 사용
-    # 표본 가중: sqrt 기준 (log보다 더 강하게 표본 큰 전략 우대)
-    norm_sc = min(np.sqrt(metrics.signal_count) / 10.0, 1.0)  # 100건 = 1.0
+    # 2. Sortino (downside-only Sharpe — 진짜 위험)
+    downside_pnls = pnls[pnls < 0]
+    if len(downside_pnls) > 1:
+        downside_std = float(np.std(downside_pnls))
+        metrics.sortino = (pnl_mean / downside_std) * np.sqrt(252) if downside_std > 0 else 0.0
+    else:
+        metrics.sortino = metrics.sharpe * 1.5 if metrics.sharpe > 0 else 0.0
+
+    # 3. Maximum Drawdown (학술 표준 — equity peak-to-trough)
+    equity = 1.0 + np.cumsum(pnls)
+    peak = np.maximum.accumulate(equity)
+    safe_peak = np.where(peak > 0.001, peak, 0.001)
+    drawdown = (equity - peak) / safe_peak
+    metrics.max_drawdown = max(float(np.min(drawdown)), -1.0)
+
+    # 4. Calmar Ratio (CAGR / |MDD|)
+    # 거래당 평균 × 연 거래수 ≈ 연간 수익 (단순 추정)
+    trades_per_year = 252 / 5  # 평균 보유 5일 가정
+    annual_return = pnl_mean * trades_per_year
+    if abs(metrics.max_drawdown) > 0.01:
+        metrics.calmar = annual_return / abs(metrics.max_drawdown)
+    else:
+        metrics.calmar = annual_return * 100  # MDD 0에 가까우면 큰 점수
+
+    # 5. Fitness (BRAIN 정확 공식) = Sharpe × √(|R| / max(Turnover, 0.125))
+    # 출처: WorldQuant BRAIN 공식 — Turnover 사용 (MDD X)
+    # 우리 시스템: Turnover proxy = 시그널 발생 빈도 (signal_count / lookback)
+    turnover_proxy = metrics.signal_count / max(lookback_days, 1)
+    abs_returns = abs(metrics.total_return)
+    if abs_returns > 0 and turnover_proxy > 0:
+        metrics.fitness = metrics.sharpe * np.sqrt(abs_returns / max(turnover_proxy, 0.125))
+        if metrics.total_return < 0:
+            metrics.fitness = -abs(metrics.fitness)  # 음수 returns → 음수 fitness
+    else:
+        metrics.fitness = 0.0
+
+    # 6. Expectancy = (WR × AvgWin) - (LR × |AvgLoss|)
+    avg_win = float(np.mean([t['pnl'] for t in wins])) if wins else 0.0
+    avg_loss = float(np.mean([t['pnl'] for t in losses])) if losses else 0.0
+    loss_rate = 1 - metrics.win_rate
+    metrics.expectancy_pct = (
+        metrics.win_rate * avg_win + loss_rate * avg_loss
+    ) * 100  # %
+
+    # 7. Margin (bps) — 거래당 평균 수익 (수수료 후)
+    # ROUND_TRIP_COST = 0.0021 (21 bps)
+    metrics.margin_bps = (pnl_mean - 0.0021) * 10000  # bps
+
+    # 8. Turnover Health (회전율 적정성)
+    # 우리 시스템 Turnover = signal_count / lookback_days (전체 lookback 기준 일관성)
+    # BRAIN 권장: 0.01~0.70 (한국 보정: 0.05~0.50, 호가 슬리피지 고려)
+    if 0.05 <= turnover_proxy <= 0.50:
+        metrics.turnover_health = 1.0
+    elif turnover_proxy < 0.05:
+        metrics.turnover_health = max(turnover_proxy / 0.05, 0.0)
+    else:  # > 0.50
+        metrics.turnover_health = max(0.0, 1.0 - (turnover_proxy - 0.50))
+
+    # 탈락 기준 없음 (사용자 요청) — 모든 전략 순위에 포함
+    metrics.passed = metrics.signal_count >= 1
+
+    # ===== Composite Score (Phase G-8 BRAIN 가중치) =====
+    # 0.35 Sortino + 0.20 Calmar + 0.15 Fitness + 0.15 Expectancy
+    # + 0.10 Turnover_health + 0.05 Sample_sqrt
+    sortino_norm = max(0.0, min(metrics.sortino / 2.0, 1.0))      # Sortino 2.0 = 1.0
+    calmar_norm = max(0.0, min(metrics.calmar / 1.0, 1.0))        # Calmar 1.0 = 1.0
+    fitness_norm = max(0.0, min(metrics.fitness / 2.0, 1.0))      # Fitness 2.0 = 1.0
+    expectancy_norm = max(0.0, min(metrics.expectancy_pct / 2.0, 1.0))  # 2% = 1.0
+    sample_norm = min(np.sqrt(metrics.signal_count) / 10.0, 1.0)  # 100건 = 1.0
+
     metrics.composite_score = (
-        0.25 * norm_wr
-        + 0.30 * norm_pf
-        + 0.15 * norm_rw
-        + 0.30 * norm_sc  # 표본 가중 0.2 → 0.3 (통계 안정성)
+        0.35 * sortino_norm
+        + 0.20 * calmar_norm
+        + 0.15 * fitness_norm
+        + 0.15 * expectancy_norm
+        + 0.10 * metrics.turnover_health
+        + 0.05 * sample_norm
     )
 
     return metrics
@@ -314,13 +386,19 @@ def select_strategies_dual(
         trades_60 = _simulate_signals_on_history(
             strategy, universe_ohlcv, universe_info, lookback=LOOKBACK_60D
         )
-        m_60 = _calc_metrics(strategy, trades_60, regime_weight=rw, sub_period_passes=2)
+        m_60 = _calc_metrics(
+            strategy, trades_60, regime_weight=rw,
+            sub_period_passes=2, lookback_days=LOOKBACK_60D,
+        )
 
         # 180일 점수
         trades_180 = _simulate_signals_on_history(
             strategy, universe_ohlcv, universe_info, lookback=LOOKBACK_180D
         )
-        m_180 = _calc_metrics(strategy, trades_180, regime_weight=rw, sub_period_passes=2)
+        m_180 = _calc_metrics(
+            strategy, trades_180, regime_weight=rw,
+            sub_period_passes=2, lookback_days=LOOKBACK_180D,
+        )
 
         # 5년 메타 점수 (alpha_pool에서)
         meta = get_alpha_metadata(strategy.name) if alpha_pool else None
@@ -345,10 +423,12 @@ def select_strategies_dual(
 
         status = "ALPHA" if meta and meta.get('tier') == 'ALPHA' else (
                  "CONS" if meta and meta.get('tier') == 'CONSISTENT' else " ")
+        # Phase G-8: BRAIN 지표 표시 (Sortino/Calmar/Fitness)
         print(f"  [{status:<5}] {strategy.name:<25s} | "
-              f"60일 PF={m_60.profit_factor:.2f} N={m_60.signal_count:2d} | "
-              f"180일 PF={m_180.profit_factor:.2f} N={m_180.signal_count:2d} | "
-              f"5년 {score_5y:.2f} | Score={composite:.3f}")
+              f"60일 Sortino={m_60.sortino:+.2f} Calmar={m_60.calmar:+.2f} "
+              f"Fit={m_60.fitness:+.2f} Margin={m_60.margin_bps:+.0f}bps N={m_60.signal_count:3d} | "
+              f"180일 Sortino={m_180.sortino:+.2f} N={m_180.signal_count:3d} | "
+              f"5y={score_5y:.2f} | Score={composite:.3f}")
 
     # Phase G-7 선정:
     # 1) ALPHA 풀은 항상 ACTIVE (보존 — 5년 strict 검증된 안전 자산)
