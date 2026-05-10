@@ -99,9 +99,8 @@ def main():
     start_time = time.time()
 
     if args.nightly:
-        # Phase 5 야간 모드: 전체 ALL_STRATEGIES 평가 → Top 10 ACTIVE 선정 → 저장
+        # Phase G-7 야간 모드: 전체 ALL_STRATEGIES 평가 → ALPHA pool 보존 + 시장 적응 Top 3
         # 스캔 X (시그널 송출 X). 다음날 14:20 daily-scan이 ACTIVE 사용.
-        # Phase G-6 fix: PHASE1+PHASE2만 사용했던 버그 → ALL_STRATEGIES (28개)
         from scripts.screeners.holly_kr.nightly_selector import select_strategies
         from scripts.screeners.holly_kr.active_strategies import save_active
         from scripts.screeners.holly_kr.scanner import ALL_STRATEGIES
@@ -109,7 +108,7 @@ def main():
         from scripts.ohlcv_data import get_ohlcv
 
         all_strategies = list(ALL_STRATEGIES)
-        print(f"\n[Phase 5 Nightly] {len(all_strategies)}개 전략 평가 (60일 + 180일 + 5년 메타)")
+        print(f"\n[Phase G-7 Nightly] {len(all_strategies)}개 전략 평가 → ALPHA + 시장 적응 Top 3")
 
         # 유니버스 + OHLCV 로드 (시총 상위 1500 종목 — Phase F 정통)
         universe = get_universe()
@@ -128,10 +127,10 @@ def main():
                 ohlcv_dict[ticker] = df
         print(f"  OHLCV 로드: {len(ohlcv_dict)}개 종목 (500일 = 200 Stage2 + 180 lookback + 120 buffer)")
 
-        # 32개 전략 평가 + Top N 선정
+        # 전체 전략 평가 → ALPHA 풀 보존 + 시장 적응 Top 3 (max_active=5 cap)
         selected, metrics = select_strategies(
             all_strategies, ohlcv_dict, universe,
-            lookback=60, max_active=10, min_active=5,
+            lookback=60, max_active=5, min_active=2,
         )
         active_names = [s.name for s in selected]
         save_active(active_names, metrics_summary={

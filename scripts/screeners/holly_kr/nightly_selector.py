@@ -23,22 +23,26 @@ from scripts.screeners.holly_kr.filters.market_filter import (
 )
 
 # ============================================================================
-# 설정 (Phase F: 듀얼 시간 척도 + ALPHA 풀 한정)
+# 설정 (Phase G-7: ALPHA 풀 보존 + 시장 적응 Top 3)
 # ============================================================================
-LOOKBACK_60D = 60           # 단기: 60일 (최근 적응)
+LOOKBACK_60D = 60           # 단기: 60일 (최근 적응 — 시장 환경 자동 반영)
 LOOKBACK_180D = 180         # 중기: 180일 (사이클 안정성)
 LOOKBACK_DAYS = LOOKBACK_60D  # backward compat
 MIN_WIN_RATE = 0.0
 MIN_PROFIT_FACTOR = 1.0
 MIN_TOTAL_RETURN = 0.0
-MAX_ACTIVE = 10             # 하루 최대 활성 전략 (ALPHA 풀 + 일부)
-MIN_ACTIVE = 3              # 하루 최소 활성 전략
+MAX_NON_POOL = 3            # 풀 외 매일 동적 Top N (시장 환경 자동 적응)
+MAX_ACTIVE = 5              # ALPHA 풀(2) + 시장 적응(3) = 5 cap
+MIN_ACTIVE = 2              # 최소 = ALPHA 풀만이라도 보존
 HYSTERESIS_MIN_PERIODS = 1
 
-# 듀얼 점수 가중치 (Phase F)
-WEIGHT_60D = 0.40   # 최근 적응
-WEIGHT_180D = 0.40  # 사이클 안정성
-WEIGHT_5Y = 0.20    # 5년 메타데이터 (ALPHA 풀에서)
+# 듀얼 점수 가중치 (Phase G-7: 60일 강조 → 최근 시장 빠른 적응)
+# 강세장 → trend_following 60일 PF↑ → 자동 진입
+# 약세장 → mean_reversion 60일 PF↑ → 자동 진입
+# 횡보장 → range/pullback 60일 PF↑ → 자동 진입
+WEIGHT_60D = 0.50   # 최근 적응 (강조 — 시장 환경 변화 빠른 반영)
+WEIGHT_180D = 0.30  # 사이클 안정성 (노이즈 보정)
+WEIGHT_5Y = 0.20    # 5년 메타데이터 (ALPHA 풀 보너스)
 
 
 @dataclass
@@ -281,21 +285,21 @@ def select_strategies_dual(
 
     regime = regime_info.get('regime', '횡보장')
 
-    # Phase G-5 하이브리드: ALPHA 풀 (보존) + 풀 외 (매일 동적 평가)
-    # 사용자 의도: "3개 고정 + 나머지 매일 60/180일 평가 후 추가"
+    # Phase G-7: ALPHA 풀 (보존) + 시장 적응 Top N (매일 동적 평가)
+    # 사용자 의도: "ALPHA pool 보존 + 최근 시장 적응 Top 3"
+    # 60일 백테스팅 = 최근 시장 환경 반영 → 강세장이면 trend, 약세장이면 mean_rev 자동 진입
     alpha_pool = load_alpha_pool()
     if alpha_pool:
         pool_names = {s['name'] for s in alpha_pool['alpha_strategies']}
-        # 전체 평가하되 ALPHA 풀은 우선 보존
         eligible_strategies = list(strategies)
-        print(f"\n[야간 전략 선정 — 하이브리드 듀얼 시간 척도] 시장 레짐: {regime}")
-        print(f"  ALPHA 풀 (항상 ACTIVE): {len(pool_names)}개 — {sorted(pool_names)}")
-        print(f"  풀 외 동적 평가: {len(eligible_strategies) - len(pool_names)}개")
-        print(f"  점수: 0.4×60일 + 0.4×180일 + 0.2×5년 메타")
+        print(f"\n[야간 전략 선정 — Phase G-7 시장 적응] 시장 레짐: {regime}")
+        print(f"  ALPHA 풀 (항상 ACTIVE, 5년 검증): {len(pool_names)}개 — {sorted(pool_names)}")
+        print(f"  풀 외 시장 적응 Top {MAX_NON_POOL} (매일 동적): {len(eligible_strategies) - len(pool_names)}개 후보")
+        print(f"  점수: {WEIGHT_60D}×60일 + {WEIGHT_180D}×180일 + {WEIGHT_5Y}×5년 메타 (60일 강조 → 시장 빠른 적응)")
     else:
         pool_names = set()
         eligible_strategies = list(strategies)
-        print(f"\n[야간 전략 선정 — 듀얼 시간 척도] 시장 레짐: {regime}")
+        print(f"\n[야간 전략 선정 — 시장 적응] 시장 레짐: {regime}")
         print(f"  ALPHA 풀 없음 → 전체 {len(eligible_strategies)}개 평가")
         print(f"  ※ 5년 백테스트 후 alpha_pool.json 생성 권장")
 
@@ -346,9 +350,9 @@ def select_strategies_dual(
               f"180일 PF={m_180.profit_factor:.2f} N={m_180.signal_count:2d} | "
               f"5년 {score_5y:.2f} | Score={composite:.3f}")
 
-    # Phase G-5 하이브리드 선정:
-    # 1) ALPHA 풀은 항상 ACTIVE (보존 — 5년 검증된 자산)
-    # 2) 풀 외에서 점수순으로 max_active까지 채움
+    # Phase G-7 선정:
+    # 1) ALPHA 풀은 항상 ACTIVE (보존 — 5년 strict 검증된 안전 자산)
+    # 2) 풀 외에서 시장 적응 Top MAX_NON_POOL (매일 60일 강조 점수)
     rated = [m for m in all_metrics if m.signal_count > 0]
     rated.sort(key=lambda m: -m.composite_score)
 
@@ -356,11 +360,8 @@ def select_strategies_dual(
     pool_metrics = [m for m in all_metrics if m.strategy_name in pool_names]
     non_pool_metrics_rated = [m for m in rated if m.strategy_name not in pool_names]
 
-    selected_metrics = list(pool_metrics)  # ALPHA 풀 먼저
-    # 단계 2: 풀 외 점수순으로 채움
-    remaining = max_active - len(selected_metrics)
-    if remaining > 0:
-        selected_metrics.extend(non_pool_metrics_rated[:remaining])
+    # 단계 2: 풀 외 시장 적응 Top MAX_NON_POOL
+    selected_metrics = list(pool_metrics) + non_pool_metrics_rated[:MAX_NON_POOL]
 
     # min_active 미달 시 풀 외 거래 0건 전략도 추가 (fallback)
     if len(selected_metrics) < min_active:
@@ -381,11 +382,16 @@ def select_strategies_dual(
 
     print(f"\n  전체 후보: {len(eligible_strategies)}개")
     print(f"  거래 발생: {len(rated)}개")
-    print(f"  오늘의 ACTIVE (Top {max_active}): {len(selected_strategies)}개")
+    print(f"  오늘의 ACTIVE: ALPHA {len(pool_metrics)}개 + 시장 적응 Top {MAX_NON_POOL} = {len(selected_strategies)}개")
     for i, m in enumerate(selected_metrics, 1):
         meta = get_alpha_metadata(m.strategy_name) if alpha_pool else None
-        tier_label = meta.get('tier', '   ') if meta else '   '
-        print(f"    {i:2d}. [{tier_label:<5}] {m.strategy_name:<25s} Score={m.composite_score:.3f}")
+        if meta:
+            tier_label = meta.get('tier', '   ')
+            origin = "ALPHA-pool"
+        else:
+            tier_label = "MKT"
+            origin = f"시장 적응 ({regime})"
+        print(f"    {i:2d}. [{tier_label:<5}] {m.strategy_name:<25s} Score={m.composite_score:.3f} ({origin})")
 
     return selected_strategies, all_metrics
 

@@ -6,10 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 HollyKR — Trade Ideas Holly AI의 한국 시장 적응 버전. 매일 KOSPI/KOSDAQ 시총 1,000억+ 종목을 30개 전략으로 스캔, 텔레그램으로 시그널 송출. **자동매매 X**, 사용자가 시그널 보고 직접 매수/매도 판단.
 
-핵심 컨셉 (Phase G-5 하이브리드):
-1. **분기 5년 strict 검증 ALPHA pool** (현재 2개: ma_convergence + new_high_52w_approach) — 항상 ACTIVE 보존
-2. **매일 60일+180일+5년 메타 평가** — 풀 외 28개에서 점수 Top 8 선정 → 합쳐 ACTIVE 10개
-3. **매일 14:20 daily-scan** — ACTIVE 10개로 시그널 발생 → 4 agents (Macro/Theme/Risk/Postmortem) 보정 → 텔레그램
+핵심 컨셉 (Phase G-7 시장 적응):
+1. **분기 5년 strict 검증 ALPHA pool** (현재 2개: ma_convergence + new_high_52w_approach) — 항상 ACTIVE 보존 (장기 안전 자산)
+2. **매일 60일 강조 평가 (0.5/0.3/0.2)** — 풀 외 28개에서 시장 적응 Top 3 선정 → 합쳐 **ACTIVE 5개**
+   - 강세장 → trend_following 60일 PF↑ → 자동 진입
+   - 약세장 → mean_reversion 60일 PF↑ → 자동 진입
+   - 횡보장 → range/pullback 60일 PF↑ → 자동 진입
+3. **매일 14:20 daily-scan** — ACTIVE 5개로 시그널 발생 (몇 개든 자연 발생) → 텔레그램
 
 ## Run Commands
 
@@ -19,7 +22,7 @@ pip install -r requirements.txt
 # 자동 모드 (실전, ACTIVE.json 사용) — 평일 14:20 GitHub Actions가 호출
 python -m scripts.screeners.holly_kr.run --auto --entry close --telegram
 
-# 야간 ACTIVE 갱신 (37개 전략 60일 평가 → Top 10 저장) — 평일 19:00
+# 야간 ACTIVE 갱신 (전체 전략 평가 → ALPHA 2 + 시장 적응 Top 3 = ACTIVE 5) — 평일 19:00
 python -m scripts.screeners.holly_kr.run --nightly --entry close
 
 # 단일 전략 스캔/디버깅
@@ -235,21 +238,33 @@ Weinstein/Minervini 통합 룰. 4 모두 충족:
 
 발동 시: 시그널 송출 동결 + 텔레그램 ⚠️ 경고 + "보유 손절 점검 권장".
 
-## 동적 ACTIVE 선정 (`nightly_selector.py`) — Phase G-5 하이브리드
+## 동적 ACTIVE 선정 (`nightly_selector.py`) — Phase G-7 시장 적응
 
-매일 19:00 KST 실행. 점수 = `0.4 × 60일 + 0.4 × 180일 + 0.2 × 5년 메타`.
+매일 19:00 KST 실행. 점수 = `0.5 × 60일 + 0.3 × 180일 + 0.2 × 5년 메타`.
+**60일 가중 강조** = 최근 시장 환경 빠른 반영 (강세장/약세장/횡보장 자동 적응).
 
-**하이브리드 선정 로직** (사용자 의도: "ALPHA pool 고정 + 나머지 매일 평가"):
-1. **ALPHA 풀은 항상 ACTIVE** (5년 strict 검증된 자산 보존)
-   - 거래 0건이어도 포함 (분기 검증된 안전 자산)
-2. **풀 외 38개 매일 동적 평가** → 점수순 Top (max_active - pool 수)
-3. 합쳐 **Top 10 ACTIVE** (`.cache/active_strategies.json`)
+**선정 로직**:
+1. **ALPHA 풀 항상 ACTIVE** (5년 strict 검증된 안전 자산, 거래 0건이어도 보존)
+2. **풀 외 28개 매일 동적 평가** → 점수순 Top 3 (시장 적응)
+3. 합쳐 **ACTIVE 5개** (`.cache/active_strategies.json`)
+
+```
+MAX_NON_POOL = 3  # 풀 외 매일 동적 Top N
+MAX_ACTIVE = 5    # ALPHA 2 + 시장 적응 3
+```
+
+시장 환경별 자동 적응:
+- 강세장 → tailwind / trend_play / clenow_momentum 60일 PF↑ 진입
+- 약세장 → bollinger_squeeze / mean_reversion 60일 PF↑ 진입
+- 횡보장 → box_range_watch / quarterback / snap_back_long 60일 PF↑ 진입
 
 점수 구성:
-- 60일 + 180일 백테스트 점수: `0.25×WR + 0.30×PF_norm + 0.15×regime + 0.30×sample`
+- 60일/180일 백테스트 점수: `0.25×WR + 0.30×PF_norm + 0.15×regime + 0.30×sample`
 - 5년 메타: 분기 5년 백테스트 tier (ALPHA=1.0, CONSISTENT=0.7) + holdout PF
 
-Top 30% = STRONG, 나머지 = WATCH (텔레그램 표시용 동적 분류).
+출력 라벨:
+- `[ALPHA]` / `[CONS ]` — alpha_pool 보존
+- `[MKT  ]` — 시장 적응 (현재 레짐 표시)
 
 ## 분기 5년 백테스트 + ALPHA 풀 (Phase F)
 
