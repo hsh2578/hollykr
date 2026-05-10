@@ -196,8 +196,29 @@ def main():
         dynamic_strong = set(FALLBACK_STRONG)
         dynamic_watch = set(FALLBACK_WATCH)
 
-    # Phase G-9: cutoff X — 모든 시그널 유지 (sub-agent 평가용)
-    # tier 라벨링만 적용 (텔레그램/JSON 표시용)
+    # Phase G-9: 전략별 시그널 Top N cutoff
+    # - clenow_momentum: Top 10 (사용자 명시 — 너무 헐렁함)
+    # - 기타: Top 40 (40개 이상 추천 = 신뢰도 ↓, 사용자 정확)
+    SPECIFIC_STRATEGY_CAP = {
+        'clenow_momentum': 10,
+    }
+    DEFAULT_STRATEGY_CAP = 40
+    from collections import Counter
+    strategy_counts = Counter(s.strategy_name for s in signals)
+    for strategy_name, n in strategy_counts.items():
+        max_n = SPECIFIC_STRATEGY_CAP.get(strategy_name, DEFAULT_STRATEGY_CAP)
+        if n > max_n:
+            strat_sigs = sorted(
+                [s for s in signals if s.strategy_name == strategy_name],
+                key=lambda s: -s.confidence,
+            )
+            keep_tickers = set(s.ticker for s in strat_sigs[:max_n])
+            removed = n - max_n
+            signals = [s for s in signals
+                       if s.strategy_name != strategy_name or s.ticker in keep_tickers]
+            print(f"  [{strategy_name}] {n}개 → Top {max_n} ({removed}개 제거)")
+
+    # 신뢰도 정렬만 (전체 시그널 cutoff X — sub-agent 평가용)
     signals.sort(key=lambda s: -s.confidence)
 
     for sig in signals:
@@ -253,7 +274,7 @@ def main():
             'signals': [
                 {
                     'ticker': s.ticker,
-                    'name': s.name,
+                    'name': getattr(s, 'ticker_name', s.ticker),
                     'sector': getattr(s, 'sector', ''),
                     'strategy_name': s.strategy_name,
                     'category': getattr(s, 'category', ''),

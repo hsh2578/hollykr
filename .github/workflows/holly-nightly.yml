@@ -1,12 +1,13 @@
-name: HollyKR Nightly Strategy Selection
+name: HollyKR Weekly Strategy Selection
 
-# 매일 평일 19:00 KST: 28개 전략 평가 (Phase G-6) → Top 10 ACTIVE 선정 → 다음날 14:20 스캔이 사용
-# Phase G-5 하이브리드: ALPHA pool 보존 + 풀 외 60/180일+5년 메타 점수 평가
+# Phase G-9: 매주 토요일 19:00 KST (UTC 10:00) — 주 1회 ACTIVE 5 갱신
+# 사용자 요청: 매일 → 매주 토요일 (안정성 ↑, GitHub Actions 비용 ↓)
+# Phase G-7/G-8 하이브리드: ALPHA pool 보존 + 시장 적응 Top 3 (BRAIN 지표)
 
 on:
   schedule:
-    # GitHub Actions cron 평균 ~1시간 지연 고려. UTC 09:00 = KST 18:00 스케줄, 실제 ~19:00 KST 실행 예상
-    - cron: '0 9 * * 1-5'
+    # 매주 토요일 UTC 10:00 = KST 19:00 (cron 지연 고려해서 앞당김)
+    - cron: '0 10 * * 6'
   workflow_dispatch:
 
 jobs:

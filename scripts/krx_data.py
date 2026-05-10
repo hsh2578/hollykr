@@ -43,6 +43,13 @@ FINANCIAL_KEYWORDS = ['은행', '보험', '증권', '캐피탈', '저축은행',
 # 스팩/리츠 패턴
 SPAC_PATTERN = re.compile(r'스팩|SPAC|기업인수목적', re.IGNORECASE)
 REIT_PATTERN = re.compile(r'리츠|REIT|부동산투자', re.IGNORECASE)
+# Phase G-9: ETF/ETN 패턴 (개별 종목 전략 대상 X)
+ETF_PATTERN = re.compile(
+    r'KODEX|TIGER|KOSEF|KBSTAR|HANARO|ARIRANG|KIWOOM|SOL ETF|RISE|ACE|SMART|'
+    r'PLUS |HK |WOORI|마이다스|미래에셋|삼성|히어로|한화 K|유진|TIMEFOLIO|'
+    r'EX |ETF|ETN|상장지수|레버리지|인버스|2X|숏 |커버드콜',
+    re.IGNORECASE
+)
 
 
 # ============================================================================
@@ -394,6 +401,7 @@ def get_stock_master(market: str = 'ALL', use_cache: bool = True) -> pd.DataFram
     df['is_common'] = df['종목코드'].apply(_is_common_stock)
     df['is_spac'] = df['종목명'].apply(lambda x: bool(SPAC_PATTERN.search(str(x))))
     df['is_reit'] = df['종목명'].apply(lambda x: bool(REIT_PATTERN.search(str(x))))
+    df['is_etf'] = df['종목명'].apply(lambda x: bool(ETF_PATTERN.search(str(x))))
 
     if 'Dept' in df.columns:
         df['업종'] = df['Dept'].replace('', '기타').fillna('기타')

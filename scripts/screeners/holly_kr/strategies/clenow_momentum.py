@@ -134,7 +134,9 @@ class ClenowMomentum(BaseStrategy):
         stop_loss_pct = max(ma100_stop_pct, atr_stop_pct, -0.08)
         target_pct = atr_target_pct
 
-        confidence = min(0.85, 0.65 + (score - self.MIN_SCORE) / 200)
+        # confidence 정밀화 (score 정렬 가능하게 — Top N 컷용)
+        # score 30 → 0.55, score 60 → 0.75, score 100 → 0.95
+        confidence = min(0.95, 0.50 + (score - self.MIN_SCORE) / 140)
 
         reason = (f"Clenow Momentum · slope×R² {score:.1f} (R² {r_sq:.2f}) · "
                   f"KOSPI 200SMA 위 · 100일 SMA 위")

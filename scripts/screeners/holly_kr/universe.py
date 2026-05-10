@@ -79,9 +79,24 @@ def get_universe(use_cache: bool = True) -> pd.DataFrame:
                 pass
         raise RuntimeError("KRX/FDR 차단 + 캐시 없음 — 데이터 소스 복구 필요")
 
-    # 1. 보통주만 (우선주 제외)
-    df = master[master['is_common'] & ~master['is_spac'] & ~master['is_reit']].copy()
-    print(f"  보통주 (스팩/리츠 제외): {len(df)}개")
+    # 1. 보통주만 (우선주 + 스팩 + 리츠 + ETF 모두 제외)
+    # is_common = 종목코드 끝자리 0 (우선주는 5/7/9 — 자동 제외됨)
+    # 캐시 데이터에 is_etf 컬럼 없으면 런타임 생성
+    if 'is_etf' not in master.columns:
+        from scripts.krx_data import ETF_PATTERN
+        master = master.copy()
+        master['is_etf'] = master['종목명'].apply(
+            lambda x: bool(ETF_PATTERN.search(str(x))))
+    total = len(master)
+    pref_count = (~master['is_common']).sum()  # 우선주
+    spac_count = master['is_spac'].sum()
+    reit_count = master['is_reit'].sum()
+    etf_count = master['is_etf'].sum()
+    df = master[
+        master['is_common'] & ~master['is_spac'] & ~master['is_reit'] & ~master['is_etf']
+    ].copy()
+    print(f"  필터 — 우선주 {pref_count}개 / 스팩 {spac_count}개 / 리츠 {reit_count}개 / ETF {etf_count}개 제외")
+    print(f"  보통주 only: {len(df)}개 (전체 {total}개 중)")
 
     # 2. 시총 필터
     df = df[df['시가총액'] >= MIN_MARKET_CAP].copy()

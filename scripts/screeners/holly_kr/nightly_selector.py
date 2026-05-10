@@ -423,12 +423,16 @@ def select_strategies_dual(
 
         status = "ALPHA" if meta and meta.get('tier') == 'ALPHA' else (
                  "CONS" if meta and meta.get('tier') == 'CONSISTENT' else " ")
-        # Phase G-8: BRAIN 지표 표시 (Sortino/Calmar/Fitness)
-        print(f"  [{status:<5}] {strategy.name:<25s} | "
-              f"60일 Sortino={m_60.sortino:+.2f} Calmar={m_60.calmar:+.2f} "
-              f"Fit={m_60.fitness:+.2f} Margin={m_60.margin_bps:+.0f}bps N={m_60.signal_count:3d} | "
-              f"180일 Sortino={m_180.sortino:+.2f} N={m_180.signal_count:3d} | "
-              f"5y={score_5y:.2f} | Score={composite:.3f}")
+        # Phase G-9: 백테스팅 결과 강화 표시 (WR/Sharpe/MDD + BRAIN 지표)
+        print(f"  [{status:<5}] {strategy.name:<25s} (60일 N={m_60.signal_count})")
+        print(f"         60일: WR={m_60.win_rate*100:5.1f}% PF={m_60.profit_factor:.2f} "
+              f"Sharpe={m_60.sharpe:+.2f} Sortino={m_60.sortino:+.2f} "
+              f"MDD={m_60.max_drawdown*100:+.1f}% Calmar={m_60.calmar:+.2f} "
+              f"Fit={m_60.fitness:+.2f} Margin={m_60.margin_bps:+.0f}bps")
+        print(f"         180일: WR={m_180.win_rate*100:5.1f}% PF={m_180.profit_factor:.2f} "
+              f"Sharpe={m_180.sharpe:+.2f} Sortino={m_180.sortino:+.2f} "
+              f"MDD={m_180.max_drawdown*100:+.1f}% N={m_180.signal_count}")
+        print(f"         종합 Score={composite:.3f} (5y meta={score_5y:.2f})")
 
     # Phase G-7 선정:
     # 1) ALPHA 풀은 항상 ACTIVE (보존 — 5년 strict 검증된 안전 자산)
