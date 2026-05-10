@@ -14,7 +14,11 @@ tools: Read, Bash, WebSearch, WebFetch, Grep
 ```
 1. data/holly_kr/sub_agent_input.json
    → 31개 시그널 + 30+ 정량 지표 (가격 모멘텀, SMA, ATR, RSI, 유동성, Stage 2)
-   → 분석 대상 ticker의 indicators 섹션 Read 후 시작
+   → 분석 대상 ticker의 다음 섹션 Read 후 시작:
+      - indicators (가격/거래량/기술적 지표)
+      - dart (최근 1년 공시: 자사주/임원매도/유상증자/주요사항/배당 등)
+      - fnguide (재무 정량: TTM 매출/영업이익/순이익, CFO/NI 이익질,
+                부채비율, 유동비율, ROE/ROA/ROIC, PER/PBR, 5년 추세)
 
 2. data/holly_kr/alpha_pool.json
    → ALPHA pool 전략 확인 (가산점)
@@ -22,14 +26,32 @@ tools: Read, Bash, WebSearch, WebFetch, Grep
 3. (선택) Stage A 결과 — Top 15 통과 사유
 ```
 
-### Web 호출 가이드 (시간 절감)
+### Web 호출 가이드 (시간 절감 — DART/FnGuide 사전 수집)
 
-- **가격/거래량 데이터**: 사전 수집됨 → 재계산 X (`indicators` 섹션 활용)
-- **WebSearch**: 카탈리스트 (실적/뉴스) 1-2회만 (사전 수집 X)
-- **WebFetch**: DART 공시 1-2개만 (꼭 필요한 것)
-- **Bash**: 추가 OHLCV 호출 X (이미 사전 수집)
+- **가격/거래량 데이터**: 사전 수집 (`indicators` 섹션) → 재계산 X
+- **재무 데이터**: 사전 수집 (`fnguide` 섹션) → FnGuide WebFetch 호출 X
+  - 매출/영업이익/순이익 추세, OPM, ROE/ROA/ROIC, 부채/유동비율, CFO/NI
+- **공시 데이터**: 사전 수집 (`dart` 섹션) → DART WebFetch 호출 X
+  - 자사주, 임원매도, 유상증자, 최대주주변경, 배당 (최근 1년 카테고리별)
+- **WebSearch**: 카탈리스트 (실적 발표 시점 뉴스, M&A, 임상결과) 1회만
+- **Bash**: 추가 OHLCV 호출 X
 
-종목당 목표 시간: 약 60-90초 (Web 호출 합쳐서)
+종목당 목표 시간: 약 50-70초 (대부분 사전 수집됨)
+
+### ⭐ 사전 수집 데이터 핵심 활용 포인트
+
+**fnguide.quality 활용 (이익 질/재무건전성 자동 검증)**:
+- `cfo_to_ni < 0.5` → 이익 질 의심 (회계적 이익만, 현금 X) → "데이터 부재" 명시 X
+- `debt_ratio_pct > 200` → 한국 위험 기준선 → 리스크 명시
+- `current_ratio_pct < 100` → 단기 유동성 압박
+- `roe_pct < 5` → 자본 효율 약함 (가치 함정 가능)
+
+**dart.events 활용 (거버넌스/이벤트 자동 포착)**:
+- `자사주`: 자사주 매입 = 긍정 / 임원 매도와 동시 = 모순 행동 (경고)
+- `임원매도`: 오너 매도 신호 (적신호)
+- `유상증자`: 단기 -15~20% 즉각 반응 패턴
+- `최대주주변경`: 블록딜 임박
+- `주요사항`: M&A, 합병 가능성
 
 
 ## 출처 태그 의무 (환각 방지 — dacon 검증 패턴)

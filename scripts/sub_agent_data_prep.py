@@ -197,6 +197,21 @@ def main():
     cache = load_ohlcv_cache()
     print(f"  OHLCV 캐시 로드: {len(cache)} 종목")
 
+    # ========== DART 공시 + FnGuide 재무 병렬 수집 ==========
+    tickers = [sig['ticker'] for sig in signals_data['signals']]
+
+    print(f"\n[{datetime.now()}] DART + FnGuide 사전 수집 시작 ({len(tickers)}개)")
+    try:
+        from sub_agent_dart_fnguide import collect_for_tickers
+        # 시총 매핑: current_price * shares (signals_today.json에 shares 없으면 None)
+        market_caps_eok = {}  # ticker → 시총 (억원)
+        # ⚠️ 시총은 universe.py에서 계산하므로 일단 None (PER 직접 계산 X)
+        df_data = collect_for_tickers(tickers, market_caps=market_caps_eok, max_workers=6)
+    except Exception as e:
+        print(f"  WARNING: DART/FnGuide 수집 실패 {e}, OHLCV indicators만 진행")
+        df_data = {}
+    print(f"[{datetime.now()}] DART + FnGuide 수집 완료\n")
+
     output = {
         'date': signals_data['date'],
         'generated_at': datetime.now().isoformat(),
@@ -230,6 +245,9 @@ def main():
             'exit_rules_summary': sig.get('exit_rules_summary', ''),
             # 사전 계산 지표
             'indicators': indicators,
+            # DART 공시 + FnGuide 재무 (사전 수집)
+            'dart': df_data.get(ticker, {}).get('dart', {'error': 'not_collected'}),
+            'fnguide': df_data.get(ticker, {}).get('fnguide', {'error': 'not_collected'}),
         }
         output['signals'].append(merged)
         ind_str = (
