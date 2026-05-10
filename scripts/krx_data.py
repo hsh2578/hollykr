@@ -329,10 +329,28 @@ def get_stock_master(market: str = 'ALL', use_cache: bool = True) -> pd.DataFram
         except Exception as e:
             print(f"  finder_stkisu 실패: {e}")
 
-    # 3차: FDR 폴백
+    # 3차: 네이버 금융 시총 스크래핑 (KRX 차단 우회 — Phase G-9)
+    if df is None or len(df) == 0:
+        print("  네이버 금융 시총 스크래핑 폴백 (KRX 차단)...")
+        try:
+            from scripts.naver_market_data import fetch_all_markets
+            naver_df = fetch_all_markets(min_market_cap_eok=1000, save_csv=True, verbose=False)
+            if naver_df is not None and len(naver_df) > 0:
+                df = pd.DataFrame({
+                    '종목코드': naver_df['Code'].astype(str).str.zfill(6),
+                    '종목명': naver_df['Name'],
+                    '종가': naver_df['Close'].astype(float),
+                    '시가총액': naver_df['MarketCap'].astype(float),  # 억원
+                    '시장구분': naver_df['Market'],
+                })
+                print(f"  네이버 폴백 성공: {len(df)}개 종목")
+        except Exception as e:
+            print(f"  네이버 폴백 실패: {e}")
+
+    # 4차: FDR 폴백 (네이버도 실패 시 마지막 시도)
     if df is None or len(df) == 0:
         import FinanceDataReader as fdr
-        print("  FDR 폴백으로 재시도...")
+        print("  FDR 폴백으로 재시도 (마지막)...")
 
         def _fetch_fdr(mkt, retries=3, delay=10):
             for attempt in range(retries):

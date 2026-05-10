@@ -13,10 +13,18 @@ HollyKR 스크리너 CLI
 """
 
 import argparse
+import os
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
+
+# Windows cp949 → UTF-8 강제 (한글 + 유니코드 특수문자 출력 안정성)
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
@@ -210,45 +218,15 @@ def main():
             sig.signal_tier = 'WATCH'  # 분류 외 모두 WATCH
 
     # ========================================================================
-    # Phase 10: 서브에이전트 통합 (Macro → Theme → Risk)
+    # Phase G-9: 4 룰 에이전트 완전 제거
+    # 사용자 명시: 시그널 평가는 sub-agent (사원) + 부서장 (메인 에이전트)만 담당
+    # Macro/Theme/Risk/Postmortem 모두 제거
     # ========================================================================
-    algopick_picks = []  # 알고픽 별도 시그널 (Theme Agent)
-    try:
-        # Macro Agent: 시장 환경 → 모든 시그널 confidence × multiplier
-        from scripts.screeners.holly_kr.agents.macro_agent import MacroAgent
-        macro = MacroAgent().evaluate()
-        macro_mult = macro['confidence_multiplier']
-        if macro_mult < 1.0:
-            print(f"  [Macro Agent] 신뢰도 ×{macro_mult:.2f} (위험 ↑)")
-            for sig in signals:
-                sig.confidence = min(0.95, sig.confidence * macro_mult)
+    algopick_picks = []  # backward compat (텔레그램 형식)
 
-        # Theme Agent: 시그널 종목 ↔ 핫 테마 매칭 + 알고픽 Top 3 발굴
-        from scripts.screeners.holly_kr.agents.theme_agent import ThemeAgent
-        theme = ThemeAgent()
-        theme_result = theme.evaluate()
-        if theme_result.get('hot_themes'):
-            print(f"  [Theme Agent] 핫 테마: {', '.join(theme_result['hot_themes'])}")
-            theme.adjust_signals(signals)
-            algopick_picks = theme_result.get('top3_picks', [])
-
-        # Risk Agent: 종목 위험 평가 → 폐기 또는 confidence 보정
-        from scripts.screeners.holly_kr.agents.risk_agent import RiskAgent
-        risk = RiskAgent()
-        before_count = len(signals)
-        signals = risk.adjust_signals(signals)
-        after_count = len(signals)
-        if before_count > after_count:
-            print(f"  [Risk Agent] {before_count - after_count}개 시그널 위험 컷")
-
-        # 신뢰도 재정렬 (에이전트 보정 후)
-        signals.sort(key=lambda s: -s.confidence)
-        signals = signals[:10]  # 최종 Top 10
-
-    except Exception as e:
-        print(f"  [Agent 파이프라인 오류] {e}")
-        import traceback
-        traceback.print_exc()
+    # 신뢰도 재정렬 + Top 10 cutoff
+    signals.sort(key=lambda s: -s.confidence)
+    signals = signals[:10]
 
     # 최종 시그널에 KIS 실시간 현재가 붙이기
     try:
@@ -260,24 +238,50 @@ def main():
     except Exception as e:
         print(f"  [현재가 조회 실패] {e}")
 
-    # Postmortem: 오늘 시그널 로그 저장 + 어제 결과 업데이트
-    try:
-        from scripts.screeners.holly_kr.agents.postmortem_agent import PostmortemAgent
-        pm = PostmortemAgent()
-        pm.log_signals(signals, regime=market_regime if 'market_regime' in dir() else '')
-        outcome = pm.update_outcomes()
-        if outcome.get('updated_count', 0) > 0:
-            print(f"  [Postmortem] 어제 시그널 {outcome['updated_count']}개 결과 업데이트 "
-                  f"(평균 PnL {outcome['avg_1d_pnl']*100:+.2f}%)")
-    except Exception as e:
-        print(f"  [Postmortem 오류] {e}")
-
     print_signals(signals)
 
     if args.csv:
         save_csv(signals)
     if args.json:
         save_json(signals)
+
+    # Phase G-9: signals_today.json 자동 저장 (sub-agent 입력용)
+    # Claude Code에서 sub-agent + 부서장이 이 JSON을 읽어 평가
+    try:
+        import json as _json
+        from dataclasses import asdict
+        signals_today_path = 'data/holly_kr/signals_today.json'
+        os.makedirs(os.path.dirname(signals_today_path), exist_ok=True)
+        signals_data = {
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'count': len(signals),
+            'signals': [
+                {
+                    'ticker': s.ticker,
+                    'name': s.name,
+                    'sector': getattr(s, 'sector', ''),
+                    'strategy_name': s.strategy_name,
+                    'category': getattr(s, 'category', ''),
+                    'entry_price': float(s.entry_price),
+                    'current_price': float(getattr(s, 'current_price', s.entry_price) or s.entry_price),
+                    'target_price': float(s.target_price),
+                    'stop_loss_price': float(s.stop_loss_price),
+                    'target_pct': float(s.target_pct),
+                    'stop_loss_pct': float(s.stop_loss_pct),
+                    'rr_ratio': float(s.rr_ratio),
+                    'confidence': float(s.confidence),
+                    'signal_tier': getattr(s, 'signal_tier', 'WATCH'),
+                    'reason': getattr(s, 'reason', ''),
+                    'hold_days_max': int(getattr(s, 'hold_days_max', 10)),
+                } for s in signals
+            ],
+        }
+        with open(signals_today_path, 'w', encoding='utf-8') as f:
+            _json.dump(signals_data, f, ensure_ascii=False, indent=2)
+        print(f"  [signals_today.json] {len(signals)}개 시그널 저장 → {signals_today_path}")
+    except Exception as e:
+        print(f"  [signals_today.json 저장 오류] {e}")
 
     if args.telegram:
         from scripts.telegram_alert import send_holly_signals_sync, send_message

@@ -46,7 +46,7 @@ def get_universe(use_cache: bool = True) -> pd.DataFrame:
     today = datetime.now().strftime('%Y-%m-%d')
     cache_file = CACHE_DIR / f'holly_universe_{today}.pkl'
 
-    # 캐시 로드
+    # 캐시 로드 (당일)
     if use_cache and cache_file.exists():
         try:
             with open(cache_file, 'rb') as f:
@@ -60,7 +60,24 @@ def get_universe(use_cache: bool = True) -> pd.DataFrame:
     print("\n[유니버스 필터링]")
     print("=" * 50)
 
-    master = get_stock_master()
+    # KRX/FDR 차단 시 가장 최근 캐시 fallback (글로벌 IP/주말 안정성)
+    try:
+        master = get_stock_master()
+    except Exception as e:
+        print(f"  [KRX/FDR 차단] {type(e).__name__}: {str(e)[:100]}")
+        # 가장 최근 캐시 검색
+        recent_caches = sorted(CACHE_DIR.glob('holly_universe_*.pkl'), reverse=True)
+        if recent_caches:
+            latest = recent_caches[0]
+            try:
+                with open(latest, 'rb') as f:
+                    cached = pickle.load(f)
+                if cached is not None and len(cached) > 0:
+                    print(f"  [Fallback] 최근 캐시 사용: {latest.name} ({len(cached)}개)")
+                    return cached
+            except Exception:
+                pass
+        raise RuntimeError("KRX/FDR 차단 + 캐시 없음 — 데이터 소스 복구 필요")
 
     # 1. 보통주만 (우선주 제외)
     df = master[master['is_common'] & ~master['is_spac'] & ~master['is_reit']].copy()
