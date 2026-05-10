@@ -196,18 +196,9 @@ def main():
         dynamic_strong = set(FALLBACK_STRONG)
         dynamic_watch = set(FALLBACK_WATCH)
 
-    strong = [s for s in signals if s.strategy_name in dynamic_strong]
-    watch = [s for s in signals if s.strategy_name in dynamic_watch]
-    other = [s for s in signals if s.strategy_name not in dynamic_strong
-             and s.strategy_name not in dynamic_watch]
-    strong.sort(key=lambda s: -s.confidence)
-    watch.sort(key=lambda s: -s.confidence)
-    other.sort(key=lambda s: -s.confidence)
-    strong_cap = strong[:5]
-    remaining_slots = 10 - len(strong_cap)
-    signals = strong_cap + watch[:remaining_slots]
-    if len(signals) < 10:
-        signals = signals + other[:10 - len(signals)]
+    # Phase G-9: cutoff X — 모든 시그널 유지 (sub-agent 평가용)
+    # tier 라벨링만 적용 (텔레그램/JSON 표시용)
+    signals.sort(key=lambda s: -s.confidence)
 
     for sig in signals:
         if sig.strategy_name in dynamic_strong:
@@ -218,15 +209,16 @@ def main():
             sig.signal_tier = 'WATCH'  # 분류 외 모두 WATCH
 
     # ========================================================================
-    # Phase G-9: 4 룰 에이전트 완전 제거
-    # 사용자 명시: 시그널 평가는 sub-agent (사원) + 부서장 (메인 에이전트)만 담당
-    # Macro/Theme/Risk/Postmortem 모두 제거
+    # Phase G-9: 4 룰 에이전트 완전 제거 + cutoff 제거
+    # 사용자 명시:
+    # - 4 룰 에이전트 (Macro/Theme/Risk/Postmortem) 모두 제거
+    # - cutoff X — ACTIVE 5 전략에서 나온 모든 시그널 sub-agent 평가
+    # - 부서장 reasoning → Top 10 (sub-agent 평가 결과 기반)
     # ========================================================================
     algopick_picks = []  # backward compat (텔레그램 형식)
 
-    # 신뢰도 재정렬 + Top 10 cutoff
+    # 신뢰도 정렬만 (cutoff X — 모든 시그널 sub-agent 평가)
     signals.sort(key=lambda s: -s.confidence)
-    signals = signals[:10]
 
     # 최종 시그널에 KIS 실시간 현재가 붙이기
     try:
