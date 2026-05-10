@@ -185,14 +185,26 @@ def format_signal_message(signals, market_regime: str = '',
 
 
 def _format_one_signal(s) -> list:
-    """개별 시그널 포맷 (3~4줄)"""
+    """개별 시그널 포맷 — 전략별 매도 룰 포함 (Phase G-9)."""
     supply = getattr(s, 'supply_demand_grade', '')
     sig_mode = getattr(s, 'entry_mode', 'open')
     entry_label = '종가' if sig_mode == 'close' else '시가'
     sector_str = f" | {s.sector}" if s.sector else ''
+    category = getattr(s, 'category', '')
+    cat_str = f" [{category}]" if category else ''
 
     target_price = s.entry_price * (1 + s.target_pct)
     stop_price = s.entry_price * (1 + s.stop_loss_pct)
+    hold_days = int(getattr(s, 'hold_days_max', 10))
+
+    # 카테고리별 ATR 배수 텍스트 (간단 표시)
+    from scripts.screeners.holly_kr.exit_rules_text import (
+        CATEGORY_RULES, STRATEGY_SPECIAL_RULES,
+    )
+    cat_rule = CATEGORY_RULES.get(category, CATEGORY_RULES.get('breakout'))
+    target_mult_text = cat_rule['target_text']
+    stop_mult_text = cat_rule['stop_text']
+    special_rule = STRATEGY_SPECIAL_RULES.get(s.strategy_name, '')
 
     # 중복 전략 수 표시
     overlap = ''
@@ -203,7 +215,7 @@ def _format_one_signal(s) -> list:
         else:
             warnings_filtered.append(w)
 
-    # 현재가 표시 (있으면 진입가 대비 변동률 함께)
+    # 현재가 표시
     current_price = getattr(s, 'current_price', 0) or 0
     if current_price > 0 and s.entry_price > 0:
         change_pct = (current_price - s.entry_price) / s.entry_price * 100
@@ -214,26 +226,28 @@ def _format_one_signal(s) -> list:
         price_line = f"  진입: {s.entry_price:,.0f}원({entry_label})"
 
     pos_pct = getattr(s, 'position_size_pct', 0) or 0
-    pos_line = f" | 권장 포지션 {pos_pct*100:.1f}%" if pos_pct > 0 else ""
+    pos_line = f" | 사이즈 {pos_pct*100:.1f}%" if pos_pct > 0 else ""
 
     lines = [
-        f"[{s.strategy_name}] {s.ticker_name}({s.ticker}){sector_str}",
+        f"[{s.strategy_name}]{cat_str} {s.ticker_name}({s.ticker}){sector_str}",
         price_line,
-        f"  목표: {target_price:,.0f}원(+{s.target_pct*100:.1f}%) | 손절: {stop_price:,.0f}원(-{abs(s.stop_loss_pct)*100:.1f}%){pos_line}",
-        f"  신뢰도 {s.confidence:.0%} | 수급 {supply or '-'}{overlap}",
+        f"  🎯 목표 {target_price:,.0f}원(+{s.target_pct*100:.1f}%={target_mult_text}) | "
+        f"🛑 손절 {stop_price:,.0f}원({s.stop_loss_pct*100:.1f}%={stop_mult_text})",
+        f"  RR {s.rr_ratio:.2f} | 보유 {hold_days}일{pos_line} | 신뢰도 {s.confidence:.0%}{overlap}",
+        f"  ⏱ 매도: 목표시 50%익절+트레일링5% / 갭다운→시초가 / 첫날-3%→시가 / {hold_days}일→종가",
     ]
+    if special_rule:
+        lines.append(f"  🔻 [전략특수] {special_rule}")
 
-    # 매수 이유 (있으면 표시)
+    # 매수 이유
     reason = getattr(s, 'reason', '')
     if reason:
-        lines.append(f"  사유: {reason}")
+        lines.append(f"  💡 사유: {reason}")
 
     if warnings_filtered:
-        lines.append(f"  [!] {', '.join(warnings_filtered)}")
+        lines.append(f"  ⚠️ {', '.join(warnings_filtered)}")
     lines.append("")
     return lines
-
-    return '\n'.join(lines)
 
 
 # ============================================================================

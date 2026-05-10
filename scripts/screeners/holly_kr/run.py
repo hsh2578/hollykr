@@ -241,7 +241,9 @@ def main():
     # Claude Code에서 sub-agent + 부서장이 이 JSON을 읽어 평가
     try:
         import json as _json
-        from dataclasses import asdict
+        from scripts.screeners.holly_kr.exit_rules_text import (
+            generate_exit_rules_text, generate_exit_rules_summary,
+        )
         signals_today_path = 'data/holly_kr/signals_today.json'
         os.makedirs(os.path.dirname(signals_today_path), exist_ok=True)
         signals_data = {
@@ -266,6 +268,9 @@ def main():
                     'signal_tier': getattr(s, 'signal_tier', 'WATCH'),
                     'reason': getattr(s, 'reason', ''),
                     'hold_days_max': int(getattr(s, 'hold_days_max', 10)),
+                    # 매도 룰 (전략별 동적 생성)
+                    'exit_rules_text': generate_exit_rules_text(s),
+                    'exit_rules_summary': generate_exit_rules_summary(s),
                 } for s in signals
             ],
         }
