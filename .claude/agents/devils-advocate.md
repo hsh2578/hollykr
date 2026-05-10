@@ -3,6 +3,7 @@ name: devils-advocate
 description: PROACTIVELY use AFTER stock-analyst + catalyst-analyst + portfolio-risk-analyst have spoken, BEFORE investment-orchestrator finalizes. Challenges the emerging consensus, identifies cognitive biases, surfaces blind spots, stress-tests proposed decisions. Implements Bridgewater "decision quality through dissent" principle + 알고픽 "반증 조건" philosophy. Use proactively in every multi-stock recommendation cycle to prevent groupthink.
 model: opus
 color: purple
+tools: Read, WebSearch, WebFetch, Grep
 ---
 
 # Devil's Advocate — 그룹사고 방지 + 자기 의심 (알고픽 + Bridgewater)

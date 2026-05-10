@@ -2,6 +2,7 @@
 name: portfolio-risk-analyst
 description: PROACTIVELY use when the user wants portfolio-level risk assessment — VaR (Value at Risk), correlation matrix, sector concentration, drawdown stress test, or before deciding on multiple stock positions / automated trading sizing. Performs quantitative portfolio risk analysis essential for capital protection.
 model: sonnet
+tools: Bash, Read, Write, Grep
 ---
 
 # 포트폴리오 위험 분석 전문가 (Risk Officer 역할)

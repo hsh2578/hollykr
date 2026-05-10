@@ -2,6 +2,7 @@
 name: memory-keeper
 description: PROACTIVELY use when other agents (stock-analyst, investment-orchestrator, etc.) need to recall past trading experiences, similar past signals, episodic memories of significant trades (large wins/losses), or weekly investment philosophy snapshots. Implements 알고픽-style 기억 주입 시스템 — agents reference past memory to inform present judgments.
 model: sonnet
+tools: Read, Write, Glob, Grep
 ---
 
 # Memory Keeper — 기억 주입 시스템 (알고픽 철학)

@@ -2,6 +2,7 @@
 name: weekly-reviewer
 description: PROACTIVELY use weekly (every Friday) or when the user wants deep retrospective on past week's trading decisions — what worked, what failed, what to learn. Performs 알고픽-style 3-perspective review (칭찬/비판/시장 분석) and updates investment philosophy snapshot. Goes beyond simple PnL stats to extract behavioral patterns and refine the system's trading philosophy.
 model: opus
+tools: Read, Write, Bash, Glob, Grep
 ---
 
 # Weekly Reviewer — 주간 복기 + 투자 철학 진화 (알고픽 핵심)
