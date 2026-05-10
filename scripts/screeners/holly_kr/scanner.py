@@ -156,6 +156,15 @@ def _scan_single_stock(ticker: str, name: str, sector: str,
             logging.warning(f"[{strategy.name}] {ticker} scan error: {e}")
             continue
 
+    # Phase G-9: 거래대금 60일 평균 자동 계산 (억원, 슬리피지 위험 평가)
+    if signals and len(df) >= 20:
+        try:
+            recent_value_eok = float((df['Close'] * df['Volume']).iloc[-60:].mean() / 1e8)
+            for sig in signals:
+                sig.daily_value_eok = round(recent_value_eok, 1)
+        except Exception:
+            pass
+
     # 수급 등급 + 종합 신뢰도 계산 (confidence.py 연동)
     if signals:
         try:

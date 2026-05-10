@@ -196,7 +196,15 @@ def main():
         dynamic_strong = set(FALLBACK_STRONG)
         dynamic_watch = set(FALLBACK_WATCH)
 
-    # Phase G-9: 전략별 시그널 Top N cutoff
+    # Phase G-9 Hard Cut #1: 거래대금 30억 미만 자동 제외 (슬리피지 위험)
+    # 사용자 결정: 실전 매수 가능선 = 30억 (그 미만 = 호가 영향 ↑)
+    MIN_DAILY_VALUE_EOK = 30
+    before = len(signals)
+    signals = [s for s in signals if getattr(s, 'daily_value_eok', 0) >= MIN_DAILY_VALUE_EOK]
+    if before > len(signals):
+        print(f"  [거래대금 컷] {MIN_DAILY_VALUE_EOK}억 미만 {before - len(signals)}개 제외 → {len(signals)}개")
+
+    # Phase G-9 Hard Cut #2: 전략별 시그널 Top N cutoff
     # - clenow_momentum: Top 10 (사용자 명시 — 너무 헐렁함)
     # - 기타: Top 40 (40개 이상 추천 = 신뢰도 ↓, 사용자 정확)
     SPECIFIC_STRATEGY_CAP = {
@@ -289,6 +297,7 @@ def main():
                     'signal_tier': getattr(s, 'signal_tier', 'WATCH'),
                     'reason': getattr(s, 'reason', ''),
                     'hold_days_max': int(getattr(s, 'hold_days_max', 10)),
+                    'daily_value_eok': float(getattr(s, 'daily_value_eok', 0)),  # 거래대금 (억)
                     # 매도 룰 (전략별 동적 생성)
                     'exit_rules_text': generate_exit_rules_text(s),
                     'exit_rules_summary': generate_exit_rules_summary(s),

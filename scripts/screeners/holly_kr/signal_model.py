@@ -30,6 +30,7 @@ class Signal:
     current_price: float = 0.0  # 조회 시점 실시간 현재가
     reason: str = ""             # 매수 이유 (전략 트리거 조건 요약)
     position_size_pct: float = 0.0  # 권장 포지션 크기 (자본 대비 %)
+    daily_value_eok: float = 0.0    # 60일 평균 거래대금 (억원) — 슬리피지 위험 평가
     risk_warnings: List[str] = field(default_factory=list)
 
     def calc_rr_ratio(self):

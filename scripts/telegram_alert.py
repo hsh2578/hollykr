@@ -233,7 +233,8 @@ def _format_one_signal(s) -> list:
         price_line,
         f"  🎯 목표 {target_price:,.0f}원(+{s.target_pct*100:.1f}%={target_mult_text}) | "
         f"🛑 손절 {stop_price:,.0f}원({s.stop_loss_pct*100:.1f}%={stop_mult_text})",
-        f"  RR {s.rr_ratio:.2f} | 보유 {hold_days}일{pos_line} | 신뢰도 {s.confidence:.0%}{overlap}",
+        f"  RR {s.rr_ratio:.2f} | 보유 {hold_days}일{pos_line} | "
+        f"신뢰도 {s.confidence:.0%} | 거래대금 {getattr(s, 'daily_value_eok', 0):.0f}억{overlap}",
         f"  ⏱ 매도: 목표시 50%익절+트레일링5% / 갭다운→시초가 / 첫날-3%→시가 / {hold_days}일→종가",
     ]
     if special_rule:
