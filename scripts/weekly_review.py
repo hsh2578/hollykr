@@ -30,8 +30,8 @@ DATA_DIR = ROOT / 'data' / 'holly_kr'
 OHLCV_CACHE = ROOT / '.cache' / 'ohlcv' / 'ohlcv_cache.pkl'
 
 
-def load_recent_analysis(days: int = 7) -> List[Dict]:
-    """최근 N일 analysis_YYYY-MM-DD.json 로드"""
+def load_recent_analysis(days: int = 30) -> List[Dict]:
+    """최근 N일 analysis_YYYY-MM-DD.json 로드 (default 30일 — 과거 분석 누적)"""
     today = datetime.now()
     results = []
     for i in range(days):
@@ -131,7 +131,7 @@ def track_buy_result(ticker: str, entry_date: str, entry_price: float, target: f
 
 def generate_weekly_review() -> str:
     """주간 리포트 생성"""
-    analyses = load_recent_analysis(days=7)
+    analyses = load_recent_analysis(days=30)
     if not analyses:
         return "주간 리포트: 최근 7일 analysis 데이터 없음"
 
