@@ -42,6 +42,16 @@ HollyKR — Trade Ideas Holly AI의 한국 시장 적응 버전. 매일 KOSPI/KO
 ```bash
 pip install -r requirements.txt
 
+# Phase G-9 자동화 5단계 (사용자 호출, Claude Code) — daily-scan + DART/FnGuide + Stage A + Stage B 31개 + 부서장 + 텔레그램
+# .claude/commands/daily-orchestrate.md (slash command)
+/daily-orchestrate
+
+# 사전 데이터 수집 (DART 공시 + FnGuide 재무 + OHLCV 30+ 지표 통합 → sub_agent_input.json)
+python scripts/sub_agent_data_prep.py
+
+# Stage A 정량 스코어러 (Python, 환각 0%, ALPHA pool 강제 진입 → stage_a_result.json)
+python scripts/stage_a_quick_score.py
+
 # 자동 모드 (실전, ACTIVE.json 사용) — 평일 14:20 GitHub Actions가 호출
 python -m scripts.screeners.holly_kr.run --auto --entry close --telegram
 
@@ -97,19 +107,31 @@ scripts/screeners/holly_kr/      # HollyKR 본체
     market_filter.py             # 5단계 레짐 + Kill Switch
     theme_filter.py              # 테마주/작전주 제외
     dedup.py                     # 3+ 전략 동시 매수 시 신뢰도 부스트
-  agents/                        # Phase 10 룰 기반 4 에이전트 (LLM X)
-    macro_agent.py               # Yahoo Finance 매크로 (KS11/KQ11/KRW=X/GSPC/CL=F) + Kill Switch
-    theme_agent.py               # KIS 섹터 → 핫 테마 Top 3 + 알고픽 Top 3 발굴
-    risk_agent.py                # 종목별 위험 평가 (시총/거래대금/ATR/변동폭) → VETO or multiplier
-    postmortem_agent.py          # 매일 시그널 → 다음날 결과 추적 + 주간 금요일 리포트
+  agents/                        # ❌ Phase 10 4 에이전트 폐기 (사용자 룰 1, 파일 보존만)
 
 scripts/                         # 데이터 레이어
   ohlcv_data.py                  # FDR/Yahoo + 영구 캐시 .cache/ohlcv/
   investor_data.py               # KIS primary, 네이버 fallback
   kis_sector_data.py             # KIS bstp_kor_isnm
   kis_price.py                   # KIS 실시간 현재가
-  fnguide_data.py                # FnGuide 재무 (Magic Formula/Piotroski용)
+  fnguide_data.py                # FnGuide 재무 풍부 모듈 (1125줄, ROE/ROIC/부채비율/CFO/PER 등)
+  fnguide_header.py              # FnGuide 헤더 (PER/PBR/배당수익률)
+  dart_api.py                    # DART OpenAPI (corp_code, 재무제표, 공시 검색)
+  sub_agent_data_prep.py         # 31개 종목 indicators 사전 수집 (OHLCV 30+ 지표) + DART/FnGuide 통합
+  sub_agent_dart_fnguide.py      # 31개 종목 병렬 수집 (CFO/NI 이익질, 부채비율, 공시 카테고리)
+  stage_a_quick_score.py         # Stage A 정량 점수 (Python, 환각 0%, ALPHA pool 강제 진입)
+  krx_master_csv.py              # 종목코드.csv (root, 매월 사용자 업데이트) → KRX 보통주 검증
   telegram_alert.py              # 강력/관심 + 3-tier (ALPHA/CONSISTENT/단기적응) + 현재가 + 사유
+
+.claude/                         # Claude Code 자동화
+  agents/
+    stock-analyst.md             # Stage B Opus (사전 수집 데이터 활용, WebFetch X)
+    investment-orchestrator.md   # 부서장 (Top 10 분산 + 텔레그램 CIO 보고서)
+    stock-analyst-quick.md       # Stage A Haiku (백업, 현재 Python으로 대체)
+  commands/
+    daily-orchestrate.md         # 5단계 자동화 slash command
+  skills/
+    hollykr-rules-check.md       # 사용자 룰 10개 자동 검증 skill (반복 실수 방지)
 
 data/holly_kr/                   # Postmortem agent 누적 로그
   signals_log.csv                # 매일 송출 시그널
@@ -308,14 +330,121 @@ MAX_ACTIVE = 5    # ALPHA 2 + 시장 적응 3
 - `walk_forward_optimize` window_end 기준 = today (X) → **learn_end** (실제 데이터 끝)
 - 학습 게이트 (윈도우당 PF≥1.2 등) = 통계적 노이즈 → **제거** (Hold-out 단독)
 
-## Phase 10 — 4 Agents (룰 기반, LLM X)
+## ❌ Phase 10 4 Agents — 폐기 (사용자 룰 1)
 
-`run.py` 자동 모드에서 4개 agent 순차 실행 → 시그널 보정:
+기존 4 룰 에이전트(Macro/Theme/Risk/Postmortem)는 사용자가 명시적으로 완전 제거 결정. `agents/` 파일은 보존되지만 `run.py`에서 호출 X. 시그널 평가는 sub-agent + 부서장 시스템으로 일원화.
 
-1. **Macro Agent** (`agents/macro_agent.py`): Yahoo Finance KS11/KQ11/KRW=X/GSPC/CL=F → Kill Switch + buying climax 검증 → confidence_multiplier
-2. **Theme Agent** (`agents/theme_agent.py`): KIS 섹터 데이터 → 핫 테마 Top 3 + 콜드 테마 Top 3 → 종목 매칭 시 multiplier (HOT 1.30, WARM 1.15, COLD 0.70). 별도로 알고픽 Top 3 발굴.
-3. **Risk Agent** (`agents/risk_agent.py`): 종목별 시총/거래대금/ATR/5일 변동폭 평가 → risk_level≥0.85 시 VETO (시그널 폐기)
-4. **Postmortem Agent** (`agents/postmortem_agent.py`): 매일 nightly 직전 어제 시그널 → 오늘 결과 추적 (`signals_log.csv` → `trades_log.csv`). 매주 금요일 주간 리포트 텔레그램 송출.
+## Phase G-9 운용 하네스 (알고픽 인사이트 통합)
+
+알고픽: "AI 투자 에이전트의 경쟁력은 모델이 아니라 하네스에서 나온다."
+하네스 = 정보수집 + 시장해석 + 후보선별 + 포지션비중 + 실행조건 + 사후복기를 묶는 운영체계.
+
+```
+HollyKR 6단계 하네스:
+
+[1. 정보 수집]    daily-scan + sub_agent_data_prep
+                 - OHLCV 30+ 지표
+                 - DART 공시 (자사주/임원매도/유상증자/최대주주변경)
+                 - FnGuide 재무 (CFO/NI 이익질, ROE/ROIC, 부채/유동비율)
+                 - KRX CSV 검증 (매월 사용자 갱신)
+
+[2. 시장 해석]   부서장 Phase G-10 테마 분석
+                 - 시장 주도 테마 식별
+                 - 자금 회전 (대체재) 패턴
+                 - Kill Switch 임박 평가
+                 - calendar effect (5월 평균 -2.1% 등)
+
+[3. 후보 선별]   Stage A 정량 + Stage B Opus 31~40개
+                 - ALPHA pool 강제 진입 (5년 strict)
+                 - Sub-agent 모든 시그널 평가 (cutoff X)
+                 - 정성 분석 + WebSearch 카탈리스트
+
+[4. 포지션 비중]  부서장 Top 10 + Kill Switch 보수
+                 - 분산 cap 5 (전략당)
+                 - ALPHA pool 가산점
+                 - 공석 허용 (강제 채우기 X)
+                 - 자본 노출 25% (평소) → Kill Switch 임박 시 16~20%
+
+[5. 실행 조건]   HollyKR 6단계 청산 (백테스트 = 실전 일치)
+                 1. 갭다운 → 시초가
+                 2. 종가 < 손절가
+                 3. 종가 ≥ 목표가 → 50% 익절 + 트레일링 5%
+                 4. 트레일링 stop
+                 5. 진입 다음날 -3% → 시가 청산
+                 6. 시간 청산 (전략별 hold_days_max)
+
+[6. 사후 복기]   Phase G-10 매주 토요일 weekly_review.py (신설)
+                 - analysis_YYYY-MM-DD.json 7일 누적
+                 - BUY 결과 추적 (목표/손절/보유)
+                 - 부서장 판단 vs 실제 결과 비교
+                 - 텔레그램 주간 리포트
+
+[자동 검증]      .claude/skills/hollykr-rules-check.md
+                 - 사용자 룰 10개 PROACTIVELY 검증
+                 - 자주 하는 실수 6개 명시
+                 - 위반 즉시 사용자 보고
+```
+
+[알고픽 vs HollyKR 보완 관계]
+- 알고픽: 탑다운 (시장 → 테마 → 종목), 정성 위주
+- HollyKR: 바텀업 (시그널 → 종목 → 시장) + Phase G-10에서 탑다운 보강
+- HollyKR: 5년 strict 정량 검증 (알고픽 명시 X) + 알고픽 테마 인사이트 통합
+- 결과: 정량 + 정성 균형, 통계 + 내러티브 양면
+
+## Phase G-9 자동화 시스템 (`/daily-orchestrate`)
+
+매일 사용자가 Claude Code에서 `/daily-orchestrate` 호출 → 5단계 자동 실행:
+
+```
+1. daily-scan (Python, ~5-7분)
+   - run.py --auto → signals_today.json (30~40개 시그널)
+   - ALPHA pool cut 면제 + 전략별 Top 20 컷
+
+2. 사전 데이터 수집 (Python, ~13초 — 40종목 병렬)
+   - sub_agent_data_prep.py 실행
+   - OHLCV 30+ 지표 (가격모멘텀/SMA/ATR/RSI/Stage 2)
+   - DART 공시 (자사주/임원매도/유상증자/최대주주변경 카테고리)
+   - FnGuide 재무 (CFO/NI 이익질, ROE/ROIC, 부채/유동비율, 5년 추세)
+   → sub_agent_input.json (각 종목 indicators + dart + fnguide 섹션)
+
+3. Stage A 정량 스코어러 (Python, ~0.5초 — 환각 0%)
+   - stage_a_quick_score.py
+   - 정량(50) + 전략 가산(15) + 정성(35) = 100점
+   - ALPHA pool 종목 무조건 Top 15 진입 (cut 면제)
+   → stage_a_result.json
+
+4. Stage B Opus sub-agent 31~40개 병렬 (~20-25분)
+   - 단일 메시지에 다중 Agent tool use (병렬)
+   - stock-analyst (Opus): 6단계 분석 + 가격 가이드
+   - WebFetch X (DART/FnGuide 사전 수집됨)
+   - WebSearch 1-2회 (카탈리스트만)
+   - 종목당 4-7분 (가장 느린 것 기다림)
+
+5. 부서장 (Opus, ~8분)
+   - investment-orchestrator: Top 10 결정
+   - 분산 cap 5 강제 (전략당)
+   - ALPHA pool 가산점, clenow 보수 강등
+   - 공석 허용 (강제 채우기 X)
+   - CIO 보고서 텔레그램 송출 (자동 4096자 분할)
+   → analysis_today.json 갱신
+```
+
+**총 실행 시간**: 약 50분
+**비용**: Claude Max $100 plan 충분 (Anthropic API 직접 결제 X)
+
+### 사용자 룰 10개 자동 검증 skill (`hollykr-rules-check.md`)
+
+`.claude/skills/hollykr-rules-check.md`가 PROACTIVELY 호출되어 매 단계 룰 위반 자동 감지:
+- 자주 하는 실수 6개 명시 (Stage A cutoff 적용, 분산 cap 잘못된 단계, 거래대금 cut 임의 추가, Haiku 종목명 환각 등)
+- 작업 단계별 체크리스트 (Stage 0~6)
+- 위반 즉시 사용자 보고 + 정정
+
+## ⚠️ 종목코드.csv (KRX 마스터, 매월 사용자 업데이트)
+
+**위치**: 프로젝트 root `종목코드.csv` (사용자가 매월 KRX 정보데이터시스템에서 다운로드)
+**자동 동기화**: `scripts/krx_master_csv.py`가 root 우선 인식 + `data/holly_kr/krx_master.csv`로 자동 백업
+**검증**: 보통주 + KOSPI/KOSDAQ만 통과 (ETF/우선주/SPAC/REIT 자동 제외)
+**현재**: 2,606 보통주 (KOSPI 808 + KOSDAQ 1,798)
 
 ## Schedule (GitHub Actions cron, 모두 KST 기준)
 

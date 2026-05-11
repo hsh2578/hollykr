@@ -113,8 +113,10 @@ Agent 도구 호출:
    - 메시지 2: Top 10 전체 (~1500-1700자)
      · 매수/보류/공석 + 전략 분산 통계
    
-   추가 저장:
-   - data/holly_kr/analysis_today.json 갱신 (오늘 날짜 + 전체 결정)"
+   추가 저장 (Phase G-10 — 매주 복기 시스템):
+   - data/holly_kr/analysis_today.json 갱신 (오늘 결정)
+   - data/holly_kr/analysis_YYYY-MM-DD.json 동일 내용 백업 저장 (날짜별 누적)
+   → 매주 토요일 weekly_review.py가 7일 누적 데이터 추적"
 ```
 
 ## 단계 6: 텔레그램 송출
