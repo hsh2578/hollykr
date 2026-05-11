@@ -1,5 +1,5 @@
 ---
-description: HollyKR 매일 자동 분석 + 텔레그램 송출 (Phase G-9 최적화). daily-scan → 사전 데이터 수집 → Stage A Haiku 31개 스크린 → Stage B Opus Top 15 깊은 분석 → 부서장 Top 10 결정 → 텔레그램 CIO 보고서 송출.
+description: HollyKR 매일 자동 분석 + 텔레그램 송출 (Phase G-11). daily-scan → 사전 데이터 수집 → Stage A Python 점수 (cutoff X) → Stage B Opus 모든 시그널 깊은 분석 → 부서장 Top 10 결정 → 텔레그램 CIO 보고서 송출.
 ---
 
 # /daily-orchestrate — HollyKR 매일 자동 분석
@@ -10,7 +10,7 @@ description: HollyKR 매일 자동 분석 + 텔레그램 송출 (Phase G-9 최�
 
 1. **4 룰 에이전트 호출 X** (완전 제거)
 2. **시그널 cutoff = 전략당 Top 20** (ALPHA pool 면제, run.py에서 처리)
-3. **Sub-agent 모든 시그널 평가** — Stage A에서 31개 모두 스크린 (cutoff X)
+3. **Sub-agent 모든 시그널 평가** — Stage A는 점수 매김(cutoff X), Stage B도 모든 시그널 (Top N으로 자르지 X)
 4. **Top 10 분산 cap 5는 부서장 단계** — 미리 적용 X
 5. **공석 허용** — 강제로 Top 10 채우지 X
 6. **텔레그램 = CIO 보고서 양식** (memory/hollykr_telegram_format.md 준수)
@@ -37,7 +37,7 @@ python scripts/sub_agent_data_prep.py
 - `data/holly_kr/sub_agent_input.json` 생성 확인
 - 각 시그널에 `indicators` 섹션 (가격 모멘텀/SMA/ATR/RSI/유동성/Stage 2) 포함 확인
 
-## 단계 3: Stage A — Python 정량 스코어러 (환각 0%)
+## 단계 3: Stage A — Python 정량 스코어러 (참고용 점수, cutoff X)
 
 ```bash
 python scripts/stage_a_quick_score.py
@@ -45,19 +45,23 @@ python scripts/stage_a_quick_score.py
 
 결과 검증:
 - `data/holly_kr/stage_a_result.json` 생성
-- 31개 모두 점수 매김 (사용자 룰 — 모든 시그널 평가)
-- Top 15 ticker 추출 (ALPHA pool 강제 진입 + 나머지 점수순)
+- **모든 시그널 점수 매김** (사용자 룰 3 — cutoff X)
+- 점수는 부서장 단계 참고용. **Stage B는 모든 시그널 평가**
 
-⚠️ **중요**: Haiku sub-agent 검토 결과 종목명 환각 19/31 발견 → Python 스코어러로 대체.
-- Python: 0.003초, 환각 0%, 사용자 룰 준수
+⚠️ **사용자 룰 3 (절대 준수)**: Sub-agent는 모든 시그널 평가, Top N으로 미리 자르지 X
+- Stage A 점수는 부서장 reasoning 참고용 (정량 컨텍스트)
+- **Stage B는 발생한 모든 시그널 (40개든 100개든) 병렬 평가**
+- Cutoff는 시그널 발생 단계 (전략당 Top 20, ALPHA 면제)에서만 적용 — run.py가 처리
+
+⚠️ **참고**: Haiku sub-agent 검토 결과 종목명 환각 19/31 발견 → Python 스코어러로 대체.
+- Python: 0.003초, 환각 0%
 - 정량 (50) + 전략 (15) + 정성 (35) = 100점 만점
-- ALPHA pool 종목 무조건 Top 15 진입 (cut 면제)
 
-## 단계 4: Stage B — Top 15 깊은 분석 (Opus, 병렬)
+## 단계 4: Stage B — 모든 시그널 깊은 분석 (Opus, 병렬)
 
-`stage_a_result.json`의 `top` 배열 (15개)에서 각 ticker 추출 후 `stock-analyst` sub-agent를 **병렬 호출**:
+`sub_agent_input.json`의 `signals` 배열 (전 시그널)에서 각 ticker 추출 후 `stock-analyst` sub-agent를 **병렬 호출**:
 
-**중요**: 단일 메시지에 15개 Agent tool use를 동시 launch (병렬). 순차 X.
+**중요**: 단일 메시지에 N개 Agent tool use를 동시 launch (병렬). 순차 X. **Top N으로 자르지 X (사용자 룰 3).**
 
 ```
 각 ticker마다:
@@ -89,12 +93,12 @@ Agent 도구 호출:
 - subagent_type: "investment-orchestrator"
 - description: "부서장 Top 10 결정"
 - prompt:
-  "HollyKR 오늘 31개 시그널 중 Stage B 통과 15개에 대한 깊은 분석 결과를
+  "HollyKR 오늘 발생한 모든 시그널의 Stage B 깊은 분석 결과를
    종합해서 Top 10을 결정해줘.
    
    입력:
-   - 단계 3 결과 (Stage A 31개 스크린)
-   - 단계 4 결과 (Stage B 15개 깊은 분석)
+   - 단계 3 결과 (Stage A — 모든 시그널 정량 점수, 참고용)
+   - 단계 4 결과 (Stage B — 모든 시그널 깊은 분석)
    - data/holly_kr/sub_agent_input.json (정량 지표)
    - data/holly_kr/alpha_pool.json (ALPHA pool)
    - data/holly_kr/analysis_today.json (참고용 — 어제 결정)
@@ -148,9 +152,9 @@ send_telegram(msg)
 
 ```
 ✅ HollyKR daily-orchestrate 완료 (총 X분 X초)
-   • daily-scan: 31개 시그널
-   • Stage A: 31 → 15 통과 (Haiku, X분)
-   • Stage B: 15개 깊은 분석 (Opus 병렬, X분)
+   • daily-scan: N개 시그널 (전략당 Top 20 cutoff, ALPHA 면제)
+   • Stage A: N개 모두 점수 (Python, 1초)
+   • Stage B: N개 모두 깊은 분석 (Opus 병렬, X분)
    • 부서장: Top 10 (BUY N / HOLD M / 공석 K)
    • 텔레그램: 2개 메시지 송출 완료
 
@@ -165,23 +169,23 @@ send_telegram(msg)
 3. 텔레그램으로 "❌ HollyKR 자동 분석 실패 — [단계] [에러]" 송출
 4. 사용자에게 명확한 에러 메시지
 
-## 예상 시간 (Phase G-9 최적화 후)
+## 예상 시간 (사용자 룰 3 — 모든 시그널 평가)
 
 ```
 단계 1: daily-scan         ~5-7분
-단계 2: 사전 수집          ~30초
-단계 3: Stage A (Python)   ~1초 ⚡ Haiku 6분 → Python 0.003초로 변경
-단계 4: Stage B (Opus 병렬) ~10-15분 (병렬, 가장 느린 것 기다림)
-단계 5: 부서장             ~3-5분
+단계 2: 사전 수집          ~30초 (40개 기준)
+단계 3: Stage A (Python)   ~1초 (모든 시그널 점수, cutoff X)
+단계 4: Stage B (Opus 병렬) ~15-25분 (N개 병렬, 가장 느린 것 기다림)
+단계 5: 부서장             ~5-8분 (G-10/G-11 컨텍스트 포함)
 단계 6: 텔레그램           ~10초
 ─────────────────────────────
-합계: 약 20-28분 (현재 30-40분 → 약 -30%)
+합계: 약 30-45분 (시그널 N개에 따라)
 
-비용 (Anthropic API 기준 추정):
+비용 (Anthropic API 기준 추정 / Claude Max plan은 무료):
 - Stage A: $0 (Python)
-- Stage B: ~$3-4 (Opus 4.7, 15회 병렬)
-- 부서장: ~$0.5-1 (Opus 4.7, 1회)
-- 합계: ~$4-5 / 회
+- Stage B: ~$5-10 (Opus 4.7, N회 병렬, N=40 기준)
+- 부서장: ~$1-2 (Opus 4.7, 1회)
+- 합계: ~$6-12 / 회 (시그널 N에 비례)
 
 Claude Code 사용 시 사용자 plan에서 차감 (별도 결제 X).
 ```

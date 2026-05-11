@@ -196,9 +196,11 @@ def main():
         dynamic_strong = set(FALLBACK_STRONG)
         dynamic_watch = set(FALLBACK_WATCH)
 
-    # Phase G-9: 전략별 시그널 Top N cutoff (단순 룰 통일)
-    # - 모든 전략: 20개 이상이면 Top 20 (사용자 명시 통일)
+    # Phase G-9: 전략별 시그널 Top N cutoff (사용자 명시 — 통일 룰)
+    # - 모든 전략: Top 20 (사용자 명시 — 너무 많은 시그널 정리)
     # - ALPHA pool (5년 strict 검증): cut 면제 (가장 신뢰)
+    # - sub-agent는 모든 시그널 평가 (cutoff X — Top 20 안에서)
+    # - 부서장 reasoning 단계에서 Top 10 만들 때 전략당 ≤5 cap 강제
     # ※ 거래대금은 표시만 (cut X) — 사용자가 직접 판단
     DEFAULT_STRATEGY_CAP = 20
     # ALPHA pool 동적 로드 (alpha_pool.json) — 갱신 시 자동 반영
