@@ -238,11 +238,79 @@ def generate_weekly_review() -> str:
     else:
         report_lines.append("○ 보통 (보유 중 결과 대기)")
 
+    # NAV vs KOSPI Alpha 측정 (Phase G-11)
+    try:
+        sys.path.insert(0, str(ROOT / 'scripts'))
+        from nav_tracker import calculate_nav_for_buys, format_nav_summary, append_nav_history
+        target_date = datetime.now().strftime('%Y-%m-%d')
+        buys_for_nav = [{**b, 'entry_date': b.get('date', target_date)} for b in all_buys]
+        nav_data = calculate_nav_for_buys(buys_for_nav, target_date)
+        report_lines.append("")
+        report_lines.append(format_nav_summary(nav_data))
+        append_nav_history(nav_data)
+    except Exception as e:
+        report_lines.append(f"\n  [NAV 추적 실패: {e}]")
+
     report_lines.append("")
     report_lines.append("━" * 30)
     report_lines.append("— HollyKR 주간 복기 (CIO 시스템 학습)")
 
     return "\n".join(report_lines)
+
+
+def save_episodic_memory(results: List[Dict]) -> Optional[Path]:
+    """
+    인상적 매매 (가장 큰 손실/이익) 자동 식별 → memory/episodic_YYYY-Wxx.md 저장.
+    알고픽 인사이트: "다음 주 에이전트가 참고해 같은 실수 반복 X"
+    """
+    valid = [r for r in results if r.get('status') in ('target_reached', 'stop_triggered', 'holding')]
+    if not valid:
+        return None
+
+    # 가장 큰 손실 + 가장 큰 이익 식별
+    max_loss = min(valid, key=lambda r: r.get('pnl_pct', 0))
+    max_gain = max(valid, key=lambda r: r.get('pnl_pct', 0))
+
+    week_num = datetime.now().isocalendar()[1]
+    year = datetime.now().year
+    out_file = DATA_DIR / 'memory' / f'episodic_{year}-W{week_num:02d}.md'
+    out_file.parent.mkdir(parents=True, exist_ok=True)
+
+    lines = [
+        f"# 에피소딕 기억 — {year}년 W{week_num:02d}주차",
+        f"생성: {datetime.now().strftime('%Y-%m-%d')}",
+        "",
+        "## ⭐ 가장 큰 이익 매매",
+        f"- 종목: {max_gain.get('name', '?')} ({max_gain.get('ticker', '?')})",
+        f"- 비중: 자본 {max_gain.get('weight_pct', 0)}%",
+        f"- 진입: {max_gain.get('entry_price', 0):,}원 → 청산: {max_gain.get('exit_price', 0):,.0f}원",
+        f"- 결과: {max_gain.get('pnl_pct', 0):+.2f}% ({max_gain.get('days_held', 0)}일)",
+        f"- 상태: {max_gain.get('status', '?')}",
+        f"- 다음 주 활용: 비슷한 패턴 (전략/섹터/시장환경) 시 BUY 격상 가능",
+        "",
+        "## 🛑 가장 큰 손실 매매",
+        f"- 종목: {max_loss.get('name', '?')} ({max_loss.get('ticker', '?')})",
+        f"- 비중: 자본 {max_loss.get('weight_pct', 0)}%",
+        f"- 진입: {max_loss.get('entry_price', 0):,}원 → 청산: {max_loss.get('exit_price', 0):,.0f}원",
+        f"- 결과: {max_loss.get('pnl_pct', 0):+.2f}% ({max_loss.get('days_held', 0)}일)",
+        f"- 상태: {max_loss.get('status', '?')}",
+        f"- 다음 주 회피: 비슷한 패턴 (전략/섹터/시장환경) 시 BUY 격상 신중",
+        "",
+        "## 통계 요약",
+        f"- 평가 대상: {len(valid)}건",
+        f"- 평균 손익: {sum(r.get('pnl_pct', 0) for r in valid) / len(valid):+.2f}%",
+        f"- 목표 도달: {sum(1 for r in valid if r.get('status') == 'target_reached')}건",
+        f"- 손절 발동: {sum(1 for r in valid if r.get('status') == 'stop_triggered')}건",
+        "",
+        "## 부서장 다음 주 반영 사항",
+        "- 위 패턴 인식하여 비슷한 시그널 시 reasoning에 명시",
+        "- 같은 실수 반복 방지 (예: 같은 전략 + 같은 섹터 손절 시 격상 신중)",
+    ]
+
+    with open(out_file, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines))
+
+    return out_file
 
 
 def main():
@@ -255,6 +323,27 @@ def main():
     with open(out_file, 'w', encoding='utf-8') as f:
         f.write(report)
     print(f"\n  → {out_file}")
+
+    # 에피소딕 기억 저장 (알고픽 인사이트)
+    analyses = load_recent_analysis(days=30)
+    all_buys = []
+    for a in analyses:
+        for stock in a.get('top10', []):
+            if 'BUY' in str(stock.get('decision', '')):
+                all_buys.append({**stock, 'date': a.get('date', '')})
+
+    if all_buys:
+        results = [
+            {**track_buy_result(b['ticker'], b['date'], b.get('entry_price', 0),
+                                b.get('target_price', b.get('target', 0)),
+                                b.get('stop_price', b.get('stop', 0)),
+                                b.get('hold_days', 30)),
+             'name': b.get('name'), 'weight_pct': b.get('weight_pct', 0)}
+            for b in all_buys
+        ]
+        episodic_file = save_episodic_memory(results)
+        if episodic_file:
+            print(f"  → {episodic_file} (에피소딕 기억)")
 
     # 텔레그램 송출 (옵션)
     if '--telegram' in sys.argv:
